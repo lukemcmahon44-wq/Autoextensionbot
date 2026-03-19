@@ -23,12 +23,13 @@ import alerts
 # ---------------------------------------------------------------------------
 load_dotenv()
 
-KALSHI_API_KEY    = os.environ.get("KALSHI_API_KEY", "")
-TELEGRAM_TOKEN    = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID  = os.environ.get("TELEGRAM_CHAT_ID", "")
-SCAN_INTERVAL_SEC = int(os.environ.get("SCAN_INTERVAL_SEC", "30"))
-LOG_FILE          = os.environ.get("LOG_FILE", "bot.log")
-DB_PATH           = os.environ.get("DB_PATH", "trades.db")
+KALSHI_API_KEY_ID      = os.environ.get("KALSHI_API_KEY_ID", "")
+KALSHI_PRIVATE_KEY_PATH = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "kalshi_private_key.pem")
+TELEGRAM_TOKEN         = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID       = os.environ.get("TELEGRAM_CHAT_ID", "")
+SCAN_INTERVAL_SEC      = int(os.environ.get("SCAN_INTERVAL_SEC", "30"))
+LOG_FILE               = os.environ.get("LOG_FILE", "bot.log")
+DB_PATH                = os.environ.get("DB_PATH", "trades.db")
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -68,8 +69,8 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     setup_logging()
 
-    if not KALSHI_API_KEY:
-        logger.error("KALSHI_API_KEY is not set — cannot start. Check your .env file.")
+    if not KALSHI_API_KEY_ID:
+        logger.error("KALSHI_API_KEY_ID is not set — cannot start. Check your .env file.")
         sys.exit(1)
 
     logger.info("=== Kalshi Trading Bot starting ===")
@@ -83,7 +84,8 @@ def main() -> None:
 
     # Create bot
     bot = TradingBot(
-        api_key=KALSHI_API_KEY,
+        api_key_id=KALSHI_API_KEY_ID,
+        private_key_path=KALSHI_PRIVATE_KEY_PATH,
         telegram_token=TELEGRAM_TOKEN,
         telegram_chat_id=TELEGRAM_CHAT_ID,
     )

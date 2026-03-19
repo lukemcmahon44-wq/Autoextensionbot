@@ -82,11 +82,12 @@ def _unique_order_id(prefix: str = "bot") -> str:
 class TradingBot:
     def __init__(
         self,
-        api_key: str,
+        api_key_id: str,
+        private_key_path: str,
         telegram_token: str,
         telegram_chat_id: str,
     ):
-        self.client = KalshiClient(api_key)
+        self.client = KalshiClient(api_key_id, private_key_path)
         self.tg_token = telegram_token
         self.tg_chat_id = telegram_chat_id
 
