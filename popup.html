@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Popup Detection Notifier</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      width: 300px;
+      padding: 16px;
+      margin: 0;
+    }
+    h2 { margin: 0 0 12px; font-size: 16px; }
+    #status {
+      font-size: 13px;
+      margin-bottom: 12px;
+      padding: 8px;
+      border-radius: 4px;
+      background: #f0f0f0;
+    }
+    #status.active { background: #d4edda; color: #155724; }
+    #status.inactive { background: #f8d7da; color: #721c24; }
+    button {
+      width: 100%;
+      padding: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    #startBtn { background: #28a745; color: white; }
+    #startBtn:hover { background: #218838; }
+    #stopBtn { background: #dc3545; color: white; }
+    #stopBtn:hover { background: #c82333; }
+    #tabInfo { font-size: 12px; color: #555; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h2>Popup Detection Notifier</h2>
+  <div id="status" class="inactive">Not monitoring any tab.</div>
+  <button id="startBtn">Monitor Current Tab</button>
+  <button id="stopBtn" disabled>Stop Monitoring</button>
+  <div id="tabInfo"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
