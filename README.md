@@ -73,16 +73,47 @@ Lead <-> Twilio <-> Retell (STT - turn-taking - barge-in - ElevenLabs TTS)
 
 ## Getting each API key
 
-> Detailed, click-by-click steps are filled in as each integration lands
-> (build steps 3–7). Summary:
+- **Anthropic** — console.anthropic.com → *API Keys* → create key → `ANTHROPIC_API_KEY`.
+- **ElevenLabs** — elevenlabs.io → profile → *API Key* → `ELEVENLABS_API_KEY`. Pick a
+  voice in *Voices* and copy its id into `config.yaml` (`elevenlabs.voice_id` and,
+  for the Retell agent, `retell.voice_id`).
+- **Twilio** — console.twilio.com → copy *Account SID* + *Auth Token* → `TWILIO_ACCOUNT_SID`,
+  `TWILIO_AUTH_TOKEN`. Buy a voice-capable number (*Phone Numbers → Buy a number*)
+  and set it as `TWILIO_FROM_NUMBER` (E.164, e.g. `+14155551234`).
+- **Retell** — dashboard.retellai.com → *API Keys* → `RETELL_API_KEY`. Connect your
+  Twilio number to Retell, create an agent, and set `RETELL_AGENT_ID`. See *Wiring
+  Retell* below.
+- **Google Calendar** — see *Google OAuth* below.
 
-- **Anthropic** — console.anthropic.com → API Keys → set `ANTHROPIC_API_KEY`. _(details: step 3)_
-- **Retell** — dashboard.retellai.com → API key + agent → `RETELL_API_KEY`, `RETELL_AGENT_ID`. _(details: step 3)_
-- **Twilio** — console.twilio.com → Account SID/Auth Token + a voice number → `TWILIO_*`. _(details: step 3)_
-- **ElevenLabs** — elevenlabs.io → Profile → API key; pick a `voice_id`. _(details: step 3)_
-- **Google Calendar (OAuth)** — Google Cloud Console → enable Calendar API →
-  OAuth consent screen → OAuth client (Desktop) → run the helper to mint a
-  `GOOGLE_OAUTH_REFRESH_TOKEN`. _(details: step 6)_
+### Google OAuth (Calendar) — mint a refresh token
+1. Google Cloud Console → create/select a project → **enable the Google Calendar API**.
+2. *APIs & Services → OAuth consent screen* → External → add yourself as a **test user**.
+3. *Credentials → Create credentials → OAuth client ID → Desktop app*. Copy the
+   client id/secret into `.env` (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`).
+4. Run the helper (opens a browser, asks for offline access):
+   ```bash
+   python get_google_token.py
+   ```
+   Paste the printed `GOOGLE_OAUTH_REFRESH_TOKEN` into `.env`. Set `GOOGLE_CALENDAR_ID`
+   (`primary`, or a specific calendar id). *(Service accounts work too via
+   `GOOGLE_SERVICE_ACCOUNT_FILE`, but can't access a personal calendar without
+   domain-wide delegation — OAuth is simpler for your own calendar.)*
+
+### Wiring Retell (telephony + webhooks)
+1. Expose this server publicly (dev): `ngrok http 8000` → set `PUBLIC_BASE_URL` to the
+   https URL.
+2. In the Retell agent settings, set the **webhook URL** to
+   `${PUBLIC_BASE_URL}/webhooks/retell` (delivers call_started / call_ended / call_analyzed).
+3. Choose your brain via `llm_mode` in `config.yaml`:
+   - `retell_managed` — configure the agent's prompt with
+     `build_system_prompt(config)` (placeholders become Retell dynamic variables) and
+     register the five tools as **custom functions** pointing at
+     `${PUBLIC_BASE_URL}/webhooks/retell/tool/<name>` (see
+     `RetellProvider.build_agent_payload()` / `brain.tools.to_retell_tools`).
+   - `custom_claude` — point the agent's **Custom LLM** websocket at
+     `${PUBLIC_BASE_URL}/llm-websocket` and set `RETELL_LLM_WEBSOCKET_URL`.
+4. Enable barge-in/interruptions on the agent (mirrors `config.yaml` →
+   `retell.interruption_sensitivity`, `enable_backchannel`).
 
 ## Install
 

@@ -145,8 +145,10 @@ class RetellProvider(VoiceProvider):
         the prompt + tools are configured on the Retell LLM. Tools point at our
         public tool endpoints.
         """
-        base = self.settings.public_base_url.rstrip("/")
-        tool_url = f"{base}/webhooks/retell/tool" if base else "<PUBLIC_BASE_URL>/webhooks/retell/tool"
+        from voiceagent.brain.tools import to_retell_tools
+
+        base = self.settings.public_base_url.rstrip("/") or "<PUBLIC_BASE_URL>"
+        tool_endpoint = f"{base}/webhooks/retell/tool"
         return {
             "voice_id": self.config.retell.voice_id,
             "enable_backchannel": self.config.retell.enable_backchannel,
@@ -154,7 +156,7 @@ class RetellProvider(VoiceProvider):
             "responsiveness": self.config.retell.responsiveness,
             "ambient_sound": self.config.retell.ambient_sound,
             "llm_mode": self.config.llm_mode,
-            "llm_websocket_url": self.settings.retell_llm_websocket_url or None,
-            "tool_endpoint": tool_url,
-            "webhook_url": f"{base}/webhooks/retell" if base else "<PUBLIC_BASE_URL>/webhooks/retell",
+            "llm_websocket_url": self.settings.retell_llm_websocket_url or f"{base}/llm-websocket",
+            "webhook_url": f"{base}/webhooks/retell",
+            "tools": to_retell_tools(tool_endpoint),
         }
