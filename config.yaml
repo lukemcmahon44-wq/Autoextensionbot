@@ -1,0 +1,74 @@
+# ===========================================================================
+# voiceagent behavior. Secrets live in .env (see .env.example); this file is
+# safe to commit. Loaded + validated by voiceagent/config.py (AppConfig).
+# ===========================================================================
+
+# --- Provider + brain --------------------------------------------------------
+voice_provider: retell            # retell | vapi
+llm_mode: retell_managed          # retell_managed | custom_claude
+                                  #  retell_managed -> Retell's LLM drives calls,
+                                  #                    our webhooks serve tools.
+                                  #  custom_claude  -> Claude drives every turn.
+
+retell:
+  voice_id: ""                    # ElevenLabs voice id configured on the Retell agent
+  enable_backchannel: true
+  interruption_sensitivity: 0.8   # barge-in (0..1)
+  responsiveness: 1.0
+  ambient_sound: null
+
+elevenlabs:                       # used by test_elevenlabs.py + agent voice
+  voice_id: "EXAVITQu4vr4xnSDxMaL"
+  model: "eleven_turbo_v2_5"
+
+claude:                           # custom_claude live brain + offline analysis
+  model: "claude-sonnet-4-5"
+  max_tokens: 1024
+  temperature: 0.7
+
+# --- Calling behavior --------------------------------------------------------
+calling:
+  concurrency_cap: 5
+  calling_hours_start: 8          # 08:00 in the LEAD's local timezone
+  calling_hours_end: 20           # 20:00 in the LEAD's local timezone
+  max_attempts: 4
+  backoff_minutes: [30, 120, 360, 1440]   # delay before retry N (no_answer/voicemail)
+  default_timezone: "America/New_York"     # fallback if area-code inference fails
+
+# --- Appointment booking -----------------------------------------------------
+booking:
+  calendar_id: "primary"          # which Google calendar to read/write
+  appointment_minutes: 30
+  buffer_minutes: 15
+  business_hours_start: 9         # availability offered to leads, in your_timezone
+  business_hours_end: 17
+  search_days_ahead: 7
+  your_timezone: "America/New_York"
+
+# --- Qualifying criteria (agent qualifies BEFORE offering slots) -------------
+# Unqualified leads get a polite close, not a booking.
+qualifying_criteria:
+  - key: is_decision_maker
+    question: "Are you the person who'd make the decision on something like this?"
+    required: true
+  - key: has_need
+    question: "Is this something you're actively trying to solve right now?"
+    required: true
+  - key: timeframe
+    question: "If it were the right fit, would you look to move in the next 30-60 days?"
+    required: false
+
+# --- Compliance --------------------------------------------------------------
+compliance:
+  disclose_ai_identity: true      # KEEP ON unless you understand the legal risk
+  company_name: "Your Company"
+  agent_name: "Alex"
+
+# --- Script / offer (injected into the editable prompt) ----------------------
+script:
+  product_name: "Your Product"
+  one_liner: "we help <ICP> achieve <outcome> without <pain>"
+  primary_pain_points:
+    - "<pain point 1>"
+    - "<pain point 2>"
+  call_objective: "book a 30-minute intro call"

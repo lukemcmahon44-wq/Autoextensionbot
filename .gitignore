@@ -1,0 +1,35 @@
+# Secrets / credentials
+.env
+*.pem
+token.json
+credentials.json
+service_account*.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs & generated artifacts
+logs/*.log
+logs/*.zip
+rejected_leads.xlsx
+report_*.xlsx
+*.mp3
+*.wav
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
