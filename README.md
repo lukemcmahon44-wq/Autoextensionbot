@@ -159,11 +159,23 @@ test_*.py              # one standalone test per integration (step 3+)
 
 ## Build status
 
-- [x] **1. Scaffold + schema + .env.example + config + README skeleton** ← you are here
-- [ ] 2. Excel ingest + `validate_spreadsheet.py` + `test_excel.py`
-- [ ] 3. Integration test scripts + `healthcheck.py` _(you run + confirm before step 4)_
-- [ ] 4. VoiceProvider layer (Retell/Twilio)
-- [ ] 5. Conversation engine + tools + editable prompt
-- [ ] 6. Google Calendar integration
-- [ ] 7. Orchestration + webhooks + retry + compliance
-- [ ] 8. Dashboard + reporting + cost tracking
+- [x] 1. Scaffold + schema + .env.example + config + README skeleton
+- [x] 2. Excel ingest + `validate_spreadsheet.py` + `test_excel.py`
+- [x] 3. Integration test scripts + `healthcheck.py`
+- [x] 4. VoiceProvider layer (Retell/Twilio)
+- [x] 5. Conversation engine + tools + editable prompt
+- [x] 6. Google Calendar integration
+- [x] 7. Orchestration + webhooks + retry + compliance
+- [x] 8. Dashboard + reporting + cost tracking
+
+### Test status
+- `pytest` — **42 passing** (ingest, phone/E.164, tz inference, calling-hours,
+  retry/backoff, tools + booking guard, DNC, webhook idempotency, dashboard,
+  provider parsing, prompt rendering, live-session turns).
+- `test_excel.py` — passes (offline). The credential-dependent scripts
+  (`healthcheck`, `test_anthropic/elevenlabs/twilio/retell/calendar`,
+  `test_end_to_end`) are implemented and report clean PASS/FAIL — run them once
+  you've filled in `.env`. They are the gate before placing real calls.
+
+> What can't be auto-verified here: the live external API calls (no keys in CI).
+> Run the `test_*.py` scripts with your own keys to validate those paths.

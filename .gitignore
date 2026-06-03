@@ -15,6 +15,7 @@ logs/*.log
 logs/*.zip
 rejected_leads.xlsx
 report_*.xlsx
+sample_leads.xlsx
 *.mp3
 *.wav
 

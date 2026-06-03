@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voice Sales Agent — Dashboard</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+    header { padding: 16px 24px; background: #151922; border-bottom: 1px solid #232838; display:flex; justify-content:space-between; align-items:center; }
+    h1 { font-size: 18px; margin: 0; }
+    .muted { color: #8a93a6; font-size: 12px; }
+    .wrap { padding: 24px; max-width: 1100px; margin: 0 auto; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px; margin-bottom: 24px; }
+    .card { background: #151922; border: 1px solid #232838; border-radius: 12px; padding: 16px; }
+    .card .n { font-size: 28px; font-weight: 700; }
+    .card .l { font-size: 12px; color: #8a93a6; text-transform: uppercase; letter-spacing: .05em; }
+    h2 { font-size: 14px; color: #8a93a6; text-transform: uppercase; letter-spacing: .05em; margin: 24px 0 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #232838; vertical-align: top; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background:#232838; }
+    .booked { background:#143d2b; color:#56d39a; }
+    .dnc, .bad_number { background:#3d1414; color:#f08a8a; }
+    .calling { background:#1d2f4d; color:#7fb3ff; }
+    .statusgrid { display:grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap:8px; }
+    .statusgrid .s { background:#151922; border:1px solid #232838; border-radius:8px; padding:8px 10px; }
+    code { color:#8a93a6; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Voice Sales Agent <span class="muted">live dashboard</span></h1>
+    <div class="muted">updated <span id="ts">—</span> · auto-refresh 5s</div>
+  </header>
+  <div class="wrap">
+    <div class="cards">
+      <div class="card"><div class="n" id="total_leads">—</div><div class="l">Leads</div></div>
+      <div class="card"><div class="n" id="in_progress">—</div><div class="l">In progress</div></div>
+      <div class="card"><div class="n" id="calls_today">—</div><div class="l">Calls today</div></div>
+      <div class="card"><div class="n booked" id="bookings">—</div><div class="l">Bookings</div></div>
+      <div class="card"><div class="n" id="total_cost">—</div><div class="l">Total cost ($)</div></div>
+    </div>
+
+    <h2>Leads by status</h2>
+    <div class="statusgrid" id="statusgrid"></div>
+
+    <h2>Cost by component</h2>
+    <div id="costs" class="muted">—</div>
+
+    <h2>Recent calls</h2>
+    <table>
+      <thead><tr><th>Lead</th><th>Outcome</th><th>Dur (s)</th><th>$</th><th>Transcript</th></tr></thead>
+      <tbody id="recent"></tbody>
+    </table>
+  </div>
+
+  <script>
+    async function refresh() {
+      try {
+        const r = await fetch('/api/stats');
+        const d = await r.json();
+        for (const k of ['total_leads','in_progress','calls_today','bookings']) {
+          document.getElementById(k).textContent = d[k];
+        }
+        document.getElementById('total_cost').textContent = (d.total_cost ?? 0).toFixed(2);
+        document.getElementById('ts').textContent = new Date(d.generated_at).toLocaleTimeString();
+
+        const sg = document.getElementById('statusgrid'); sg.innerHTML = '';
+        for (const [k,v] of Object.entries(d.leads_by_status)) {
+          const el = document.createElement('div'); el.className = 's';
+          el.innerHTML = `<div class="muted">${k}</div><div style="font-size:20px;font-weight:600">${v}</div>`;
+          sg.appendChild(el);
+        }
+
+        const costs = Object.entries(d.cost_by_component || {});
+        document.getElementById('costs').textContent = costs.length
+          ? costs.map(([k,v]) => `${k}: $${v.toFixed(4)}`).join('  ·  ') : 'no cost data yet';
+
+        const tb = document.getElementById('recent'); tb.innerHTML = '';
+        for (const c of d.recent) {
+          const tr = document.createElement('tr');
+          const oc = c.outcome ? `<span class="pill ${c.outcome}">${c.outcome}</span>` : '';
+          tr.innerHTML = `<td>${c.lead ?? '?'}</td><td>${oc}</td><td>${c.duration_s ?? ''}</td>`
+            + `<td>${c.cost != null ? c.cost.toFixed(3) : ''}</td>`
+            + `<td><code>${(c.transcript||'').replace(/</g,'&lt;')}</code></td>`;
+          tb.appendChild(tr);
+        }
+      } catch (e) { console.error(e); }
+    }
+    refresh(); setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
