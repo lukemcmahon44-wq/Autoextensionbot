@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.sqlite*
+logs/*.log
+logs/*.zip
+.env
+.git/
+.pytest_cache/
+sample_leads.xlsx
+rejected_leads.xlsx
+report_*.xlsx
+*.mp3
+*.wav

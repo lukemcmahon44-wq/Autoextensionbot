@@ -71,6 +71,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "transfer_to_human",
+        "description": "Hand the call to a human rep when the lead asks for a person, or "
+        "when you genuinely can't help. Only available if escalation is configured.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"reason": {"type": "string"}},
+            "required": ["reason"],
+        },
+    },
+    {
         "name": "end_call",
         "description": "End the call with the correct outcome.",
         "input_schema": {
@@ -97,25 +107,57 @@ _OUTCOME_TO_STATUS = {
 }
 
 
-def to_retell_tools(tool_endpoint: str) -> list[dict[str, Any]]:
-    """Convert the schemas to Retell custom-function format (managed mode).
+def to_retell_tools(
+    tool_endpoint: str,
+    transfer_number: str | None = None,
+    transfer_type: str = "cold_transfer",
+) -> list[dict[str, Any]]:
+    """Build Retell ``general_tools`` (managed mode), using the live SDK schema.
 
-    Each function posts to a single dispatch endpoint with the tool name.
+    Our calendar/DB tools become ``custom`` functions posting to our webhook;
+    ``end_call`` and ``transfer_call`` use Retell's native tool types so Retell
+    actually hangs up / bridges the transfer.
     """
-    out = []
+    endpoint = tool_endpoint.rstrip("/")
+    custom_names = {"check_availability", "book_appointment", "mark_callback", "flag_dnc"}
+    speak_while = {
+        "check_availability": "Let me check the calendar for open times.",
+        "book_appointment": "Let me lock that in.",
+    }
+    tools: list[dict[str, Any]] = []
     for t in TOOL_DEFINITIONS:
-        out.append(
+        if t["name"] not in custom_names:
+            continue
+        entry: dict[str, Any] = {
+            "type": "custom",
+            "name": t["name"],
+            "description": t["description"],
+            "url": f"{endpoint}/{t['name']}",
+            "parameters": t["input_schema"],
+        }
+        if t["name"] in speak_while:
+            entry["execution_message_description"] = speak_while[t["name"]]
+        tools.append(entry)
+
+    tools.append(
+        {
+            "type": "end_call",
+            "name": "end_call",
+            "description": "End the call politely when the conversation is complete.",
+        }
+    )
+    if transfer_number:
+        tools.append(
             {
-                "type": "custom",
-                "name": t["name"],
-                "description": t["description"],
-                "url": f"{tool_endpoint.rstrip('/')}/{t['name']}",
-                "parameters": t["input_schema"],
-                "speak_during_execution": t["name"] == "check_availability",
-                "speak_after_execution": True,
+                "type": "transfer_call",
+                "name": "transfer_to_human",
+                "description": "Transfer the call to a human rep when the lead asks for one "
+                "or you can't help.",
+                "transfer_destination": {"type": "predefined", "number": transfer_number},
+                "transfer_option": {"type": transfer_type},
             }
         )
-    return out
+    return tools
 
 
 # --------------------------------------------------------------------------- #
@@ -143,6 +185,7 @@ class ToolExecutor:
             "book_appointment": self._book_appointment,
             "mark_callback": self._mark_callback,
             "flag_dnc": self._flag_dnc,
+            "transfer_to_human": self._transfer_to_human,
             "end_call": self._end_call,
         }.get(name)
         if handler is None:
@@ -236,6 +279,14 @@ class ToolExecutor:
         set_dnc(self.session, self.lead.id, args.get("reason", "verbal opt-out"))
         self.session.flush()
         return {"status": "dnc_set", "message": "Lead will not be called again."}
+
+    def _transfer_to_human(self, args):
+        esc = self.config.escalation
+        if not (esc.enabled and esc.transfer_number):
+            return {"status": "error", "message": "human transfer is not configured"}
+        log_consent(self.session, self.lead.id, "disposition", f"transfer_to_human: {args.get('reason', '')}")
+        self.session.flush()
+        return {"status": "transfer", "transfer_number": esc.transfer_number, "transfer_type": esc.transfer_type}
 
     def _end_call(self, args):
         outcome = args.get("outcome", "completed")

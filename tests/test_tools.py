@@ -73,3 +73,17 @@ def test_end_call_never_downgrades_booking(session, lead):
 
 def test_unknown_tool(session, lead):
     assert _ex(session, lead).execute("nope", {})["status"] == "error"
+
+
+def test_transfer_disabled_by_default(session, lead):
+    r = _ex(session, lead).execute("transfer_to_human", {"reason": "wants a person"})
+    assert r["status"] == "error"
+
+
+def test_transfer_when_enabled(session, lead):
+    cfg = get_config().model_copy(deep=True)
+    cfg.escalation.enabled = True
+    cfg.escalation.transfer_number = "+14155550123"
+    ex = ToolExecutor(session, lead, cfg, calendar=FakeCalendar())
+    r = ex.execute("transfer_to_human", {"reason": "wants a person"})
+    assert r["status"] == "transfer" and r["transfer_number"] == "+14155550123"

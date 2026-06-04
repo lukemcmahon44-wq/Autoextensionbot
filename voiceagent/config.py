@@ -78,10 +78,21 @@ class QualifyingCriterion(BaseModel):
 
 class RetellVoiceConfig(BaseModel):
     voice_id: str = ""                     # ElevenLabs voice id on the Retell agent
+    managed_model: str = "gpt-4o"          # Retell LLM model for retell_managed mode
+    start_speaker: str = "agent"           # who speaks first on outbound
     enable_backchannel: bool = True
     interruption_sensitivity: float = 0.8  # barge-in
     responsiveness: float = 1.0
     ambient_sound: Optional[str] = None
+
+
+class EscalationConfig(BaseModel):
+    """Human handoff. transfer_number must be E.164. cold_transfer hands off
+    immediately; warm_transfer announces the lead first (Retell-managed mode)."""
+
+    enabled: bool = False
+    transfer_number: str = ""
+    transfer_type: Literal["cold_transfer", "warm_transfer"] = "cold_transfer"
 
 
 class ElevenLabsConfig(BaseModel):
@@ -125,6 +136,8 @@ class ScriptConfig(BaseModel):
     one_liner: str = "we help <ICP> achieve <outcome> without <pain>"
     primary_pain_points: list[str] = Field(default_factory=list)
     call_objective: str = "book a 30-minute intro call"
+    opening_line: str = ""           # optional first line; blank = let the model open
+    voicemail_message: str = ""      # left on voicemail detection; blank = just hang up
 
 
 class AppConfig(BaseModel):
@@ -137,6 +150,7 @@ class AppConfig(BaseModel):
     booking: BookingConfig = Field(default_factory=BookingConfig)
     qualifying_criteria: list[QualifyingCriterion] = Field(default_factory=list)
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
+    escalation: EscalationConfig = Field(default_factory=EscalationConfig)
     script: ScriptConfig = Field(default_factory=ScriptConfig)
 
 

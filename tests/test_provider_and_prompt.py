@@ -61,3 +61,31 @@ def test_prompt_keeps_placeholders_without_lead_and_can_disable_disclosure():
     s = build_system_prompt(cfg, None)
     assert "{{lead_name}}" in s
     assert "AI assistant" not in s
+
+
+def test_prompt_includes_lead_and_booking_timezones():
+    s = build_system_prompt(
+        get_config(), LeadContext(lead_id=1, phone="+1", name="Sam", timezone="America/Chicago")
+    )
+    assert "America/Chicago" in s  # the lead's tz
+    assert get_config().booking.your_timezone in s  # offered-slot tz
+
+
+def test_to_retell_tools_uses_native_end_call_and_transfer():
+    from voiceagent.brain.tools import to_retell_tools
+
+    tools = to_retell_tools("https://x/webhooks/retell/tool", transfer_number="+14155550123")
+    custom = {t["name"] for t in tools if t["type"] == "custom"}
+    assert custom == {"check_availability", "book_appointment", "mark_callback", "flag_dnc"}
+    assert all(
+        t["url"].startswith("https://x/webhooks/retell/tool/") for t in tools if t["type"] == "custom"
+    )
+    assert any(t["type"] == "end_call" for t in tools)
+    transfer = [t for t in tools if t["type"] == "transfer_call"]
+    assert transfer and transfer[0]["transfer_destination"]["number"] == "+14155550123"
+
+
+def test_to_retell_tools_omits_transfer_when_not_configured():
+    from voiceagent.brain.tools import to_retell_tools
+
+    assert not any(t["type"] == "transfer_call" for t in to_retell_tools("https://x/t"))

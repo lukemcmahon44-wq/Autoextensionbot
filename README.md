@@ -43,7 +43,7 @@ behind a config switch (`llm_mode`):
 - **`retell_managed`** (default) — Retell's own LLM runs the conversation from
   the editable prompt; our FastAPI webhooks service the tool calls
   (`check_availability`, `book_appointment`, `mark_callback`, `flag_dnc`,
-  `end_call`). Lowest latency.
+  `transfer_to_human`, `end_call`). Lowest latency.
 - **`custom_claude`** — Claude (`claude-sonnet-4-5`) drives every turn over a
   custom-LLM WebSocket with full tool-calling. Maximum control.
 
@@ -100,20 +100,23 @@ Lead <-> Twilio <-> Retell (STT - turn-taking - barge-in - ElevenLabs TTS)
    domain-wide delegation — OAuth is simpler for your own calendar.)*
 
 ### Wiring Retell (telephony + webhooks)
-1. Expose this server publicly (dev): `ngrok http 8000` → set `PUBLIC_BASE_URL` to the
-   https URL.
-2. In the Retell agent settings, set the **webhook URL** to
-   `${PUBLIC_BASE_URL}/webhooks/retell` (delivers call_started / call_ended / call_analyzed).
-3. Choose your brain via `llm_mode` in `config.yaml`:
-   - `retell_managed` — configure the agent's prompt with
-     `build_system_prompt(config)` (placeholders become Retell dynamic variables) and
-     register the five tools as **custom functions** pointing at
-     `${PUBLIC_BASE_URL}/webhooks/retell/tool/<name>` (see
-     `RetellProvider.build_agent_payload()` / `brain.tools.to_retell_tools`).
-   - `custom_claude` — point the agent's **Custom LLM** websocket at
-     `${PUBLIC_BASE_URL}/llm-websocket` and set `RETELL_LLM_WEBSOCKET_URL`.
-4. Enable barge-in/interruptions on the agent (mirrors `config.yaml` →
-   `retell.interruption_sensitivity`, `enable_backchannel`).
+1. Expose this server publicly: `ngrok http 8000` (dev) or your host → set
+   `PUBLIC_BASE_URL` to the https URL.
+2. **Provision the agent from your config** — one command, no dashboard clicking.
+   It creates the LLM + agent and wires the prompt, tools, voice, webhook, voicemail,
+   barge-in, and (if enabled) human transfer:
+   ```bash
+   python provision_retell.py --dry-run   # inspect the payloads first
+   python provision_retell.py             # create it; prints RETELL_AGENT_ID
+   ```
+   Paste the printed `RETELL_AGENT_ID` (and `RETELL_LLM_WEBSOCKET_URL` for
+   `custom_claude`) into `.env`, then attach your Twilio number to the agent in the
+   Retell dashboard.
+3. `llm_mode` picks the brain: `retell_managed` (Retell's model + our tool webhooks)
+   or `custom_claude` (Claude drives over `${PUBLIC_BASE_URL}/llm-websocket`). The
+   provisioning script wires whichever you set.
+4. Human handoff: set `escalation.enabled: true` + `transfer_number` in `config.yaml`
+   and re-provision; the agent gets a native Retell `transfer_call` tool.
 
 ## Install
 
@@ -156,12 +159,40 @@ python validate_spreadsheet.py leads.xlsx    # writes rejected_leads.xlsx
 
 ## Run a campaign
 
+There are two processes:
+
 ```bash
+# 1) The web service — receives Retell webhooks/tools + serves the dashboard.
+#    This MUST be running and reachable at PUBLIC_BASE_URL during calls.
+uvicorn voiceagent.api.app:app --host 0.0.0.0 --port 8000
+
+# 2) The campaign worker — places the calls. Run on demand or on a schedule.
 python run_campaign.py leads.xlsx             # ingest + dial new/retry leads
-# Dashboard (leads by status, calls today, bookings, transcripts, costs):
-uvicorn voiceagent.api.app:app --reload
+python run_campaign.py --dry-run              # preview who'd be called now
 python report.py                              # export outcomes to Excel
 ```
+
+## Deploy (production)
+
+1. **Database** — set `DATABASE_URL` to Postgres
+   (`postgresql+psycopg://user:pass@host/db`) and `pip install "psycopg[binary]"`.
+   Run `alembic upgrade head`. (SQLite is fine for testing; it doesn't survive a
+   container restart.)
+2. **Web service** — host the FastAPI app on a stable HTTPS URL and set
+   `PUBLIC_BASE_URL` to it. A `Dockerfile` is included:
+   ```bash
+   docker build -t voice-agent .
+   docker run -p 8000:8000 --env-file .env voice-agent   # runs migrations + uvicorn
+   ```
+   Put it behind your platform's TLS (Fly/Render/Cloud Run/ECS, etc.).
+3. **Provision Retell** against that URL: `python provision_retell.py`, then attach
+   your Twilio number to the agent.
+4. **Run the worker** (`run_campaign.py`) from a cron/scheduler. It self-limits to the
+   concurrency cap and only dials leads inside their local calling window, so you can
+   safely run it every few minutes.
+5. **Before real leads:** run the `test_*.py` suite with live keys, replace the EXAMPLE
+   `script`/`compliance`/`qualifying_criteria` in `config.yaml` with your real offer,
+   and confirm your lawful basis to call (see the compliance note above).
 
 ---
 
@@ -198,11 +229,14 @@ test_*.py              # one standalone test per integration (step 3+)
 - [x] 6. Google Calendar integration
 - [x] 7. Orchestration + webhooks + retry + compliance
 - [x] 8. Dashboard + reporting + cost tracking
+- [x] 9. Gap-closing: human transfer, timezone-aware booking, voicemail message,
+      one-command Retell provisioning, Dockerfile + deploy guide
 
 ### Test status
-- `pytest` — **42 passing** (ingest, phone/E.164, tz inference, calling-hours,
-  retry/backoff, tools + booking guard, DNC, webhook idempotency, dashboard,
-  provider parsing, prompt rendering, live-session turns).
+- `pytest` — **47 passing** (ingest, phone/E.164, tz inference, calling-hours,
+  retry/backoff, tools + booking guard + transfer, DNC, webhook idempotency,
+  dashboard, provider parsing, Retell tool schema, prompt rendering + timezones,
+  live-session turns).
 - `test_excel.py` — passes (offline). The credential-dependent scripts
   (`healthcheck`, `test_anthropic/elevenlabs/twilio/retell/calendar`,
   `test_end_to_end`) are implemented and report clean PASS/FAIL — run them once

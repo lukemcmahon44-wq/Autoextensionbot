@@ -35,6 +35,7 @@ Your objective for this call: {call_objective}.
 # Who you're talking to
 Name: {lead_name}
 Business: {business_name}
+Their timezone: {lead_timezone}
 Notes from our list: {lead_notes}
 
 # How to run the call (a proven framework — adapt naturally, don't read it)
@@ -56,6 +57,9 @@ Notes from our list: {lead_notes}
 
 # Booking rules (MANDATORY)
 - Use check_availability to get real open times from the calendar. Offer 2-3.
+- All offered times are in {your_timezone}. Say the timezone out loud. If the
+  lead is in a different timezone ({lead_timezone}), convert to THEIR local time
+  and confirm both so there's no confusion.
 - BEFORE calling book_appointment you MUST say the exact day, date, and time
   back to them and get a clear yes (set confirmed_verbally=true only after they
   agree).
@@ -67,14 +71,13 @@ Notes from our list: {lead_notes}
 - book_appointment — create the meeting. Requires confirmed_verbally=true.
 - mark_callback — if they want to talk later, capture the requested time.
 - flag_dnc — if they ask not to be called again / opt out, call this immediately
-  and end the call courteously. This is non-negotiable.
+  and end the call courteously. This is non-negotiable.{transfer_tool_line}
 - end_call — when the conversation is complete, with the right outcome.
 
 # Hard rules
 - Be honest. Never misrepresent the product, price, or who you are.
 - Respect "no". One gentle reframe at most, then accept their answer gracefully.
-- If they opt out, flag_dnc and end politely. If voicemail, leave a short
-  friendly message (if configured) or end_call with outcome=voicemail.
+{transfer_instruction}{voicemail_instruction}
 - Keep it human and brief. You are a guest on their phone.
 """
 
@@ -112,12 +115,38 @@ def build_system_prompt(
         lead_name = lead.name or "there"
         business_name = lead.business_name or "(unknown)"
         lead_notes = lead.notes or "(none)"
+        lead_timezone = lead.timezone or config.booking.your_timezone
     else:
         lead_name = "{{lead_name}}"
         business_name = "{{business_name}}"
         lead_notes = "{{lead_notes}}"
+        lead_timezone = "{{lead_timezone}}"
 
-    disclosure = _AI_DISCLOSURE.format(company_name=config.compliance.company_name) if config.compliance.disclose_ai_identity else ""
+    disclosure = (
+        _AI_DISCLOSURE.format(company_name=config.compliance.company_name)
+        if config.compliance.disclose_ai_identity
+        else ""
+    )
+
+    if config.escalation.enabled and config.escalation.transfer_number:
+        transfer_tool_line = (
+            "\n- transfer_to_human — hand the call to a human rep if they ask for "
+            "one or you genuinely can't help."
+        )
+        transfer_instruction = (
+            "- If they ask to speak to a human, or you're stuck on something you "
+            "can't resolve, use transfer_to_human rather than guessing.\n"
+        )
+    else:
+        transfer_tool_line = ""
+        transfer_instruction = ""
+
+    voicemail_instruction = ""
+    if config.script.voicemail_message:
+        voicemail_instruction = (
+            f'- If you reach voicemail, leave exactly this and then end the call: '
+            f'"{config.script.voicemail_message}"\n'
+        )
 
     return SYSTEM_PROMPT_TEMPLATE.format(
         agent_name=config.compliance.agent_name,
@@ -130,5 +159,10 @@ def build_system_prompt(
         lead_name=lead_name,
         business_name=business_name,
         lead_notes=lead_notes,
+        lead_timezone=lead_timezone,
+        your_timezone=config.booking.your_timezone,
         qualifying_criteria=_render_criteria(config),
+        transfer_tool_line=transfer_tool_line,
+        transfer_instruction=transfer_instruction,
+        voicemail_instruction=voicemail_instruction,
     )

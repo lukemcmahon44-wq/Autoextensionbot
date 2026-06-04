@@ -1,6 +1,10 @@
 # ===========================================================================
 # voiceagent behavior. Secrets live in .env (see .env.example); this file is
 # safe to commit. Loaded + validated by voiceagent/config.py (AppConfig).
+#
+# ⚠️  The `script`, `compliance`, and `qualifying_criteria` sections below are a
+#     WORKING EXAMPLE so you can hear how it sounds in a test call. REPLACE them
+#     with your real company, offer, and criteria before calling real leads.
 # ===========================================================================
 
 # --- Provider + brain --------------------------------------------------------
@@ -11,7 +15,10 @@ llm_mode: retell_managed          # retell_managed | custom_claude
                                   #  custom_claude  -> Claude drives every turn.
 
 retell:
-  voice_id: ""                    # ElevenLabs voice id configured on the Retell agent
+  voice_id: ""                    # ElevenLabs voice id on the Retell agent (REQUIRED)
+  managed_model: "gpt-4o"         # Retell LLM model (retell_managed). Any Retell-
+                                  # supported model, incl. claude-3.7-sonnet, gpt-4.1...
+  start_speaker: "agent"          # agent speaks first on outbound
   enable_backchannel: true
   interruption_sensitivity: 0.8   # barge-in (0..1)
   responsiveness: 1.0
@@ -43,32 +50,42 @@ booking:
   business_hours_start: 9         # availability offered to leads, in your_timezone
   business_hours_end: 17
   search_days_ahead: 7
-  your_timezone: "America/New_York"
+  your_timezone: "America/New_York"   # slots are offered in this tz
+
+# --- Human handoff (optional) ------------------------------------------------
+escalation:
+  enabled: false                  # set true + a number to allow live transfers
+  transfer_number: ""             # E.164, e.g. +14155550123 (your sales line)
+  transfer_type: "cold_transfer"  # cold_transfer | warm_transfer
 
 # --- Qualifying criteria (agent qualifies BEFORE offering slots) -------------
-# Unqualified leads get a polite close, not a booking.
+# Unqualified leads get a polite close, not a booking.   ⚠️ EXAMPLE — edit.
 qualifying_criteria:
   - key: is_decision_maker
-    question: "Are you the person who'd make the decision on something like this?"
+    question: "Are you the person who handles marketing decisions there?"
     required: true
   - key: has_need
-    question: "Is this something you're actively trying to solve right now?"
+    question: "Are you actively trying to get more customers right now?"
     required: true
   - key: timeframe
-    question: "If it were the right fit, would you look to move in the next 30-60 days?"
+    question: "If it were a fit, would you want to start in the next 30-60 days?"
     required: false
 
 # --- Compliance --------------------------------------------------------------
 compliance:
   disclose_ai_identity: true      # KEEP ON unless you understand the legal risk
-  company_name: "Your Company"
+  company_name: "Acme Growth"     # ⚠️ EXAMPLE — your company
   agent_name: "Alex"
 
 # --- Script / offer (injected into the editable prompt) ----------------------
+# ⚠️ EXAMPLE OFFER — replace everything below with your real pitch.
 script:
-  product_name: "Your Product"
-  one_liner: "we help <ICP> achieve <outcome> without <pain>"
+  product_name: "Acme Growth"
+  one_liner: "we help local home-service businesses book more jobs with done-for-you Google Ads, and you only pay for results"
   primary_pain_points:
-    - "<pain point 1>"
-    - "<pain point 2>"
-  call_objective: "book a 30-minute intro call"
+    - "spending on ads that don't turn into booked jobs"
+    - "leads that never answer or aren't a fit"
+    - "no time to manage marketing while running the business"
+  call_objective: "book a 20-minute strategy call"
+  opening_line: ""                # blank = let the agent open naturally
+  voicemail_message: "Hi, this is Alex from Acme Growth — I'll try you again later, or call us back at your convenience. Thanks!"

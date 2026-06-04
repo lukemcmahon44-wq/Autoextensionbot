@@ -149,6 +149,7 @@ class RetellProvider(VoiceProvider):
 
         base = self.settings.public_base_url.rstrip("/") or "<PUBLIC_BASE_URL>"
         tool_endpoint = f"{base}/webhooks/retell/tool"
+        esc = self.config.escalation
         return {
             "voice_id": self.config.retell.voice_id,
             "enable_backchannel": self.config.retell.enable_backchannel,
@@ -158,5 +159,9 @@ class RetellProvider(VoiceProvider):
             "llm_mode": self.config.llm_mode,
             "llm_websocket_url": self.settings.retell_llm_websocket_url or f"{base}/llm-websocket",
             "webhook_url": f"{base}/webhooks/retell",
-            "tools": to_retell_tools(tool_endpoint),
+            "tools": to_retell_tools(
+                tool_endpoint,
+                transfer_number=esc.transfer_number if esc.enabled else None,
+                transfer_type=esc.transfer_type,
+            ),
         }
