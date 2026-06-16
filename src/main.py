@@ -193,12 +193,14 @@ class App:
             market_by_ticker = {t: self._market_for_ticker(t) for t in account.positions}
             self.executor.flatten_all(account, market_by_ticker)
             self.notifier.halt(halt or "flatten requested", flattened=True)
+            self.risk.record_success()   # reconcile succeeded -> a healthy cycle
             self._persist()
             return
         if self.risk.global_halt():
-            # Kill switch or error breaker: do nothing this cycle (human takes over).
+            # Kill switch: freeze everything this cycle (a human takes over).
             log.warning("global halt active: %s", halt)
             self.notifier.halt(halt or "global halt")
+            self.risk.record_success()   # reconcile succeeded -> clear any error breaker
             self._persist()
             return
 
