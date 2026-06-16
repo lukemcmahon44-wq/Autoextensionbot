@@ -83,3 +83,35 @@ def test_stop_at_or_above_band_rejected(config, tmp_path):
     config["strategy"]["stop_loss_cents"] = 97   # >= entry_min 96 -> would fire instantly
     with pytest.raises(config_mod.ConfigError):
         config_mod.load_settings(_dump(tmp_path, config))
+
+
+def test_take_profit_below_stop_rejected(config, tmp_path):
+    config["strategy"]["take_profit_cents"] = 90   # below stop 93 -> contradictory
+    with pytest.raises(config_mod.ConfigError):
+        config_mod.load_settings(_dump(tmp_path, config))
+
+
+def test_position_cap_above_total_rejected(config, tmp_path):
+    config["risk"]["max_position_usd"] = 500
+    config["risk"]["max_total_exposure_usd"] = 250
+    with pytest.raises(config_mod.ConfigError):
+        config_mod.load_settings(_dump(tmp_path, config))
+
+
+def test_zero_concurrent_positions_rejected(config, tmp_path):
+    config["risk"]["max_concurrent_positions"] = 0
+    with pytest.raises(config_mod.ConfigError):
+        config_mod.load_settings(_dump(tmp_path, config))
+
+
+def test_daily_loss_limit_out_of_range_rejected(config, tmp_path):
+    config["risk"]["daily_loss_limit_pct"] = 0
+    with pytest.raises(config_mod.ConfigError):
+        config_mod.load_settings(_dump(tmp_path, config))
+
+
+def test_valid_take_profit_accepted(config, tmp_path):
+    config["mode"]["paper_trading"] = True
+    config["strategy"]["take_profit_cents"] = 99
+    s = config_mod.load_settings(_dump(tmp_path, config))
+    assert s.strategy["take_profit_cents"] == 99

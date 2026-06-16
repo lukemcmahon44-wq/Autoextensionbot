@@ -261,6 +261,14 @@ def run(settings, *, max_cycles: int = 0, poll_interval: Optional[float] = None)
 
     log.info("starting loop: paper=%s interval=%.1fs max_cycles=%s scale=%.1f",
              settings.paper, interval, max_cycles or "inf", scale)
+
+    # One-time startup alert so a hands-off deploy announces it came up + its limits.
+    r, st = settings.risk, settings.strategy
+    app.notifier.startup(
+        f"band={st['entry_min_cents']}-{st['entry_max_cents']}c stop={st['stop_loss_cents']}c "
+        f"pos<=${r['max_position_usd']} total<=${r['max_total_exposure_usd']} "
+        f"concurrent<={r['max_concurrent_positions']} daily_stop={r['daily_loss_limit_pct']}%"
+    )
     cycle = 0
     while not _STOP["flag"]:
         cycle += 1

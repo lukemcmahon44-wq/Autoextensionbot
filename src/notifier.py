@@ -29,6 +29,9 @@ class Notifier:
         except Exception as exc:  # noqa: BLE001 -- alerting must never break trading
             log.warning("notifier: webhook post failed (ignored): %s", exc)
 
+    def startup(self, summary: str) -> None:
+        self._send(f"STARTED — {summary}")
+
     def trade(self, action: str, ticker: str, count: int, price_cents: int, reason: str = "") -> None:
         suffix = f" ({reason})" if reason else ""
         self._send(f"TRADE {action.upper()} {ticker} x{count} @ {price_cents}c{suffix}")

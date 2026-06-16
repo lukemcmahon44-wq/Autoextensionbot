@@ -37,7 +37,15 @@ Live trading needs two things: **real credentials** and **paper turned off**.
 2. `config.yaml` already ships live (`mode.paper_trading: false`). Leave it.
 3. Verify the base URLs in `config.yaml` (`mode.api_base_live`) against
    <https://docs.kalshi.com> — Kalshi has moved hosts before.
-4. Start it:
+4. **Validate the API with your DEMO key first** (read-only; places no order):
+   ```bash
+   FORCE_PAPER=true python -m src.smoke
+   # optional: also test the order create+cancel path (DEMO host only)
+   FORCE_PAPER=true python -m src.smoke --place-test-order
+   ```
+   It checks auth, the markets/orderbook/balance/positions endpoints, and prints
+   `SMOKE TEST: PASSED ✅`. Fix anything it flags before going live.
+5. Start it:
    ```bash
    python -m src.main
    ```

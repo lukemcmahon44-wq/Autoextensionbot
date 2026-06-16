@@ -81,13 +81,37 @@ def _validate_shape(raw: Dict[str, Any]) -> None:
     if missing:
         raise ConfigError(f"config.yaml missing required sections: {missing}")
     s = raw["strategy"]
+    r = raw["risk"]
     if not (1 <= s["entry_min_cents"] <= s["entry_max_cents"] <= 99):
         raise ConfigError("strategy entry band must satisfy 1 <= min <= max <= 99")
     if s["stop_loss_cents"] >= s["entry_min_cents"]:
         # A stop at/above the entry band would fire instantly -- almost certainly a typo.
         raise ConfigError("stop_loss_cents should be below entry_min_cents")
-    if raw["risk"]["max_position_usd"] <= 0 or raw["risk"]["max_total_exposure_usd"] <= 0:
+    if not (1 <= s["stop_loss_cents"] <= 99):
+        raise ConfigError("stop_loss_cents must be within 1..99")
+    tp = s.get("take_profit_cents")
+    if tp is not None and not (s["stop_loss_cents"] < tp <= 99):
+        raise ConfigError("take_profit_cents, if set, must be above stop_loss_cents and <= 99")
+    for key in ("max_entry_slippage_cents", "max_exit_slippage_cents",
+                "max_entry_spread_cents", "min_orderbook_depth_contracts"):
+        if s.get(key, 0) < 0:
+            raise ConfigError(f"strategy.{key} must be >= 0")
+    if s["max_hours_to_close"] <= 0:
+        raise ConfigError("strategy.max_hours_to_close must be > 0")
+
+    # --- risk caps ---
+    if r["max_position_usd"] <= 0 or r["max_total_exposure_usd"] <= 0:
         raise ConfigError("risk caps must be positive")
+    if r["max_position_usd"] > r["max_total_exposure_usd"]:
+        raise ConfigError("max_position_usd cannot exceed max_total_exposure_usd")
+    if r["max_concurrent_positions"] < 1:
+        raise ConfigError("risk.max_concurrent_positions must be >= 1")
+    if not (0 < r["daily_loss_limit_pct"] <= 100):
+        raise ConfigError("risk.daily_loss_limit_pct must be in (0, 100]")
+    if r["no_new_entries_before_close_min"] < 0:
+        raise ConfigError("risk.no_new_entries_before_close_min must be >= 0")
+    if r["max_consecutive_errors"] < 1:
+        raise ConfigError("risk.max_consecutive_errors must be >= 1")
 
 
 def _load_private_key_or_raise(path: Optional[str]):
