@@ -1,0 +1,36 @@
+# systemd unit for always-on hosting.
+#
+# Install:
+#   sudo cp deploy/kalshi-scalper.service /etc/systemd/system/
+#   sudo mkdir -p /opt/kalshi-scalper && sudo cp -r src config.yaml /opt/kalshi-scalper/
+#   # put your secrets in /opt/kalshi-scalper/.env and your key alongside it
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now kalshi-scalper
+#
+# Watch it:   journalctl -u kalshi-scalper -f
+# Stop fast:  touch /opt/kalshi-scalper/KILL   (flattens, then halts)
+#             sudo systemctl stop kalshi-scalper
+[Unit]
+Description=kalshi-scalper autonomous trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=scalper
+WorkingDirectory=/opt/kalshi-scalper
+# Secrets live here (chmod 600). For a paper dry-run add FORCE_PAPER=true.
+EnvironmentFile=/opt/kalshi-scalper/.env
+ExecStart=/usr/bin/python3 -m src.main
+# Crash-resistant: the loop self-heals, but restart the process if it ever exits.
+Restart=always
+RestartSec=10
+# Don't fight a fail-closed refusal (exit 2) in a tight loop.
+RestartPreventExitStatus=2
+# Light hardening.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
