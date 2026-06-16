@@ -1,0 +1,288 @@
+"""The hands-off trading loop.
+
+Crash-resistant: the body of every cycle is wrapped; on failure we alert,
+``record_error()`` into the circuit breaker, persist state, and keep going.
+State is persisted to ``state.json`` so a restart resumes cleanly.
+
+Run a safe dry-run with:   FORCE_PAPER=true python -m src.main
+The shipped config default is LIVE -- the owner runs it with their own keys.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import signal
+import time
+from datetime import datetime
+from typing import Dict, Optional
+
+from . import config as config_mod
+from .executor import Executor, LiveBroker, PaperBroker
+from .kalshi_client import KalshiClient
+from .marketdata import LiveMarketData, SimMarketData, set_sim_clock
+from .models import Market
+from .notifier import Notifier
+from .risk import RiskManager
+from .scanner import Scanner
+from .state import load_state, save_state
+from .strategy import plan_entry, should_exit
+
+log = logging.getLogger("kalshi.main")
+
+
+class Clock:
+    """Wall clock, optionally accelerated for offline paper testing.
+
+    Acceleration is *only* ever applied in paper mode -- live trading always runs
+    at real time. ``set scale`` so a short paper run can simulate a whole session.
+    """
+
+    def __init__(self, scale: float = 1.0):
+        self.start = time.time()
+        self.scale = max(1.0, scale)
+
+    def now(self) -> float:
+        return self.start + (time.time() - self.start) * self.scale
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+class App:
+    def __init__(self, settings, clock: Clock):
+        self.settings = settings
+        self.clock = clock
+        self.cfg = settings.raw
+        self.strategy_cfg = settings.strategy
+        self.notifier = Notifier(settings.secrets.webhook_url, paper=settings.paper)
+
+        set_sim_clock(clock.now)  # so SimMarketData marks to the loop's clock
+
+        data_source, broker = self._build_market_layer()
+        self.data_source = data_source
+        self.executor = Executor(
+            broker,
+            data_source,
+            self.strategy_cfg,
+            day_fn=lambda: datetime.fromtimestamp(self.clock.now()).strftime("%Y%m%d"),
+        )
+        self.risk = RiskManager.from_settings(settings, now_fn=clock.now)
+        self.scanner = Scanner(self.strategy_cfg, now_fn=clock.now)
+        self.state_path = settings.loop["state_file"]
+        self.last_summary_day: Optional[str] = None
+        self._restore()
+
+    # ----- wiring ---------------------------------------------------------
+    def _make_client(self) -> Optional[KalshiClient]:
+        s = self.settings
+        if not (s.secrets.api_key_id and s.secrets.private_key_path):
+            return None
+        return KalshiClient(s.api_base, s.secrets.api_key_id, s.secrets.private_key_path)
+
+    def _build_market_layer(self):
+        s = self.settings
+        if not s.paper:
+            client = self._make_client()  # creds are guaranteed present (fail-closed)
+            log.info("LIVE mode: real-money trading against %s", s.api_base)
+            return LiveMarketData(client), LiveBroker(client)
+
+        # ---- paper mode ----
+        source_pref = s.mode.get("paper_data_source", "auto")
+        start_balance = _env_float("PAPER_START_BALANCE", 1000.0)
+        broker = PaperBroker(start_balance)
+
+        if source_pref in ("auto", "live"):
+            client = self._make_client()
+            if client is not None:
+                try:
+                    client.get_exchange_status()  # reachability + auth probe
+                    log.info("PAPER mode: live demo data from %s (simulated fills)", s.api_base)
+                    return LiveMarketData(client), broker
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("PAPER: demo host unreachable (%s)", exc)
+                    if source_pref == "live":
+                        log.warning("paper_data_source=live but unreachable; falling back to sim")
+            elif source_pref == "live":
+                log.warning("paper_data_source=live but no credentials; falling back to sim")
+
+        log.info("PAPER mode: OFFLINE simulator (no network, simulated fills)")
+        sim = SimMarketData(self.clock.now(), self.strategy_cfg["max_hours_to_close"])
+        return sim, broker
+
+    # ----- persistence ----------------------------------------------------
+    def _restore(self):
+        st = load_state(self.state_path)
+        self.risk.restore(st.get("risk", {}))
+        self.executor._seq = int(st.get("executor_seq", 0))
+        self.last_summary_day = st.get("last_summary_day")
+        if self.settings.paper and isinstance(self.executor.broker, PaperBroker):
+            self.executor.broker.restore(st.get("paper_broker", {}))
+        if st:
+            log.info("restored state from %s", self.state_path)
+
+    def _persist(self):
+        st = {
+            "risk": self.risk.snapshot(),
+            "executor_seq": self.executor._seq,
+            "last_summary_day": self.last_summary_day,
+        }
+        if self.settings.paper and isinstance(self.executor.broker, PaperBroker):
+            st["paper_broker"] = self.executor.broker.snapshot()
+        save_state(self.state_path, st)
+
+    # ----- one cycle ------------------------------------------------------
+    def _market_for_ticker(self, ticker: str) -> Market:
+        bid, ask, bd, ad = self.data_source.orderbook_top(ticker)
+        return Market(ticker, "open", 0, bid, ask, ad, bd)
+
+    def run_cycle(self):
+        now = self.clock.now()
+
+        # 1) reconcile from the source of truth (exchange / paper broker).
+        account = self.executor.reconcile(now)
+        marks: Dict[str, Optional[int]] = {
+            t: self.data_source.orderbook_top(t)[0] for t in account.positions
+        }
+        equity = account.equity_usd(marks)
+        self.risk.update_daily_pnl(equity)
+        log.info(
+            "cycle: equity=$%.2f day_pnl=%+.2f%% cash=$%.2f positions=%d",
+            equity, self.risk.daily_pnl_pct(), account.balance_usd, len(account.positions),
+        )
+
+        self._maybe_daily_summary(equity, len(account.positions))
+
+        # 2) halt / flatten handling.
+        halt = self.risk.halt_reason()
+        if self.risk.should_flatten():
+            market_by_ticker = {t: self._market_for_ticker(t) for t in account.positions}
+            self.executor.flatten_all(account, market_by_ticker)
+            self.notifier.halt(halt or "flatten requested", flattened=True)
+            self._persist()
+            return
+        if self.risk.global_halt():
+            # Kill switch or error breaker: do nothing this cycle (human takes over).
+            log.warning("global halt active: %s", halt)
+            self.notifier.halt(halt or "global halt")
+            return
+
+        # 3) manage exits (stops / take-profit) on existing positions.
+        for ticker, pos in list(account.positions.items()):
+            market = self._market_for_ticker(ticker)
+            decision = should_exit(pos, market, self.strategy_cfg)
+            if decision is None:
+                continue
+            res = self.executor.place_exit(decision, pos, market)
+            if res.ok and res.filled_count > 0:
+                self.notifier.trade("sell", ticker, res.filled_count,
+                                    res.avg_fill_cents or decision.limit_price_cents, decision.reason)
+            account = self.executor.broker.get_account()
+
+        # 4) entries (only if new entries are not halted).
+        if halt:
+            log.info("entries halted: %s", halt)
+        else:
+            self._scan_and_enter(account)
+
+        self.risk.record_success()
+        self._persist()
+
+    def _scan_and_enter(self, account):
+        candidates = self.scanner.scan(self.data_source)
+        for m in candidates:
+            account = self.executor.broker.get_account()  # refresh caps each entry
+            remaining = self.risk.remaining_exposure_budget_usd(account)
+            plan = plan_entry(
+                m, account, self.strategy_cfg,
+                max_position_usd=self.risk.max_position_usd,
+                remaining_exposure_usd=remaining,
+            )
+            if plan is None:
+                continue
+            decision = self.risk.check_entry(plan, account, m)
+            if not decision:
+                log.info("entry blocked %s: %s", m.ticker, decision.reason)
+                continue
+            res = self.executor.place_entry(plan, m)
+            if res.ok and res.filled_count > 0:
+                self.notifier.trade("buy", m.ticker, res.filled_count,
+                                    res.avg_fill_cents or plan.limit_price_cents)
+            elif not res.ok:
+                log.warning("entry order failed %s: %s", m.ticker, res.error)
+
+    def _maybe_daily_summary(self, equity: float, positions: int):
+        day = self.risk.day_key
+        if self.last_summary_day is None:
+            self.last_summary_day = day
+            return
+        if day != self.last_summary_day:
+            self.notifier.daily_summary(equity, self.risk.daily_pnl_pct(), positions)
+            self.last_summary_day = day
+
+
+_STOP = {"flag": False}
+
+
+def _install_signal_handlers():
+    def _handler(signum, _frame):
+        log.info("received signal %s; stopping after this cycle", signum)
+        _STOP["flag"] = True
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _handler)
+        except Exception:  # pragma: no cover -- e.g. non-main thread
+            pass
+
+
+def run(settings, *, max_cycles: int = 0, poll_interval: Optional[float] = None) -> None:
+    # Acceleration only in paper; live always runs at real time.
+    scale = _env_float("SIM_TIME_SCALE", 1.0) if settings.paper else 1.0
+    app = App(settings, Clock(scale=scale))
+    interval = poll_interval if poll_interval is not None else float(settings.loop["poll_interval_sec"])
+    _install_signal_handlers()
+
+    log.info("starting loop: paper=%s interval=%.1fs max_cycles=%s scale=%.1f",
+             settings.paper, interval, max_cycles or "inf", scale)
+    cycle = 0
+    while not _STOP["flag"]:
+        cycle += 1
+        try:
+            app.run_cycle()
+        except Exception as exc:  # noqa: BLE001 -- the loop must survive anything
+            log.exception("cycle %d failed", cycle)
+            tripped = app.risk.record_error()
+            app.notifier.error(f"cycle {cycle} failed: {exc}")
+            if tripped:
+                app.notifier.halt(app.risk.halt_reason() or "error circuit breaker")
+            app._persist()
+        if max_cycles and cycle >= max_cycles:
+            log.info("reached max_cycles=%d; exiting", max_cycles)
+            break
+        if _STOP["flag"]:
+            break
+        time.sleep(interval)
+    log.info("loop stopped after %d cycles", cycle)
+
+
+def main() -> None:
+    try:
+        settings = config_mod.load_settings(os.environ.get("CONFIG_PATH", "config.yaml"))
+    except config_mod.ConfigError as exc:
+        # Fail closed with a clean message instead of a stack trace.
+        print(f"REFUSING TO START: {exc}", flush=True)
+        raise SystemExit(2)
+    logging.basicConfig(
+        level=getattr(logging, settings.raw.get("logging", {}).get("level", "INFO")),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    max_cycles = int(_env_float("MAX_CYCLES", 0))
+    poll = _env_float("POLL_INTERVAL_SEC", float(settings.loop["poll_interval_sec"]))
+    run(settings, max_cycles=max_cycles, poll_interval=poll)
+
+
+if __name__ == "__main__":
+    main()

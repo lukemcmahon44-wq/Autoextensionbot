@@ -114,6 +114,13 @@ class RiskManager:
             return f"error circuit breaker ({self.consecutive_errors} consecutive errors)"
         return None
 
+    def global_halt(self) -> bool:
+        """Kill switch or error breaker => stop *everything* (entries and
+        discretionary exits); a human takes over. A pure daily-loss halt only
+        blocks new entries, so it is intentionally excluded here.
+        """
+        return self.kill_switch_active() or self.circuit_broken()
+
     def should_flatten(self) -> bool:
         """Whether the current halt condition also demands flattening positions."""
         if self.kill_switch_active() and self.flatten_on_kill:
