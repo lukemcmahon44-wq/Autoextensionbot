@@ -93,6 +93,22 @@ Covers the risk guardrails, scanner filters, sizing, exit logic, idempotent
 orders, paper fills, settlement, reconciliation, RSA-PSS signing, and the wired
 loop (including kill-switch flatten and daily-limit halt).
 
+## Backtest — understand the risk before you risk money
+
+```bash
+python -m src.backtest --trials 400 --start-balance 1000
+```
+
+Runs the **real** decision code (scanner, sizing, stop, risk caps) over hundreds
+of simulated same-day sessions and prints the distribution of outcomes. The model
+is deliberately honest — an *efficient market with no edge* plus **gap risk**
+(`--gap-prob`, favorites that jump through the stop). A representative run:
+~95% of days are small wins, but the worst ~5% of days lose multiples of a
+typical win, **capped near your `daily_loss_limit_pct`** by the flatten. That
+fat-tailed shape — not the mean — is the point. It is a synthetic, fee-free
+model: **not a profit forecast.** Edge has to come from *which* markets you let it
+trade, not from the mechanics.
+
 ## Architecture
 
 ```

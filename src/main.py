@@ -53,9 +53,10 @@ def _env_float(name: str, default: float) -> float:
 
 
 class App:
-    def __init__(self, settings, clock: Clock):
+    def __init__(self, settings, clock: Clock, *, persist: bool = True):
         self.settings = settings
         self.clock = clock
+        self.persist = persist
         self.cfg = settings.raw
         self.strategy_cfg = settings.strategy
         self.notifier = Notifier(settings.secrets.webhook_url, paper=settings.paper)
@@ -100,7 +101,7 @@ class App:
 
         # ---- paper mode ----
         source_pref = s.mode.get("paper_data_source", "auto")
-        start_balance = _env_float("PAPER_START_BALANCE", 1000.0)
+        start_balance = _env_float("PAPER_START_BALANCE", float(s.mode.get("paper_start_balance", 1000.0)))
         broker = PaperBroker(start_balance)
 
         if source_pref in ("auto", "live"):
@@ -118,11 +119,21 @@ class App:
                 log.warning("paper_data_source=live but no credentials; falling back to sim")
 
         log.info("PAPER mode: OFFLINE simulator (no network, simulated fills)")
-        sim = SimMarketData(self.clock.now(), self.strategy_cfg["max_hours_to_close"])
+        m = s.mode
+        sim = SimMarketData(
+            self.clock.now(),
+            self.strategy_cfg["max_hours_to_close"],
+            seed=int(m.get("sim_seed", 7)),
+            n=int(m.get("sim_markets", 6)),
+            win_prob=m.get("sim_win_prob", 0.6),
+            gap_prob=float(m.get("sim_gap_prob", 0.0)),
+        )
         return sim, broker
 
     # ----- persistence ----------------------------------------------------
     def _restore(self):
+        if not self.persist:
+            return
         st = load_state(self.state_path)
         self.risk.restore(st.get("risk", {}))
         self.executor._seq = int(st.get("executor_seq", 0))
@@ -133,6 +144,8 @@ class App:
             log.info("restored state from %s", self.state_path)
 
     def _persist(self):
+        if not self.persist:
+            return
         st = {
             "risk": self.risk.snapshot(),
             "executor_seq": self.executor._seq,

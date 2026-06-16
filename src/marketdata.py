@@ -97,13 +97,24 @@ class _SimMarket:
         # has things to bite on; a couple start lower / destined NO to exercise
         # the stop-loss path.
         self.mid = rng.choice([90, 94, 96, 97, 98])
+        # Gap risk: a "gap" market holds near its entry price and then jumps
+        # DISCONTINUOUSLY to its terminal value -- blowing straight through the
+        # stop. This is the real tail risk of buying near-certain favorites, so a
+        # smooth-walk-only sim would dangerously understate the downside.
+        self.gap = False
+        self.gap_ts = close_ts
 
     def mid_at(self, now: float, open_ts: float) -> int:
-        # Converge the mid toward the terminal value as close approaches, with
-        # bounded noise. Deterministic-ish via the seeded rng.
+        target = 100 if self.outcome_yes else 0
+        if self.gap:
+            if now >= self.gap_ts:
+                # The jump: stop never gets a tradeable price on the way down.
+                return min(99, max(1, target))
+            # Hover near the entry band until the jump.
+            return int(min(99, max(1, round(self.mid + self.rng.uniform(-1.0, 1.0)))))
+        # Non-gap markets converge smoothly toward the terminal value.
         span = max(1.0, self.close_ts - open_ts)
         frac = min(1.0, max(0.0, (now - open_ts) / span))
-        target = 100 if self.outcome_yes else 0
         mid = self.mid + (target - self.mid) * (frac ** 2)
         mid += self.rng.uniform(-1.5, 1.5)
         return int(min(99, max(1, round(mid))))
@@ -112,16 +123,31 @@ class _SimMarket:
 class SimMarketData:
     """Offline market simulator for paper runs with no network access."""
 
-    def __init__(self, now: float, max_hours_to_close: float, *, seed: int = 7, n: int = 6):
+    def __init__(self, now: float, max_hours_to_close: float, *, seed: int = 7,
+                 n: int = 6, win_prob: Optional[float] = 0.6, gap_prob: float = 0.0):
         self.rng = random.Random(seed)
         self.open_ts = now
         horizon = max_hours_to_close * 3600
         self.markets: Dict[str, _SimMarket] = {}
         for i in range(n):
             close = int(now + self.rng.uniform(0.4, 0.95) * horizon)
-            outcome = self.rng.random() < 0.6   # ~60% settle YES (favorites win often)
             tk = f"SIM-EVENT-{i:02d}"
-            self.markets[tk] = _SimMarket(tk, close, outcome, self.rng)
+            if win_prob is not None:
+                # Fixed win rate (used by the demo runs).
+                outcome = self.rng.random() < win_prob
+                m = _SimMarket(tk, close, outcome, self.rng)
+            else:
+                # Efficient-market baseline (used by the backtest): a market priced
+                # at p cents settles YES with probability p/100 -- i.e. NO edge, so
+                # the result shows the honest cost of crossing the spread + stops.
+                m = _SimMarket(tk, close, False, self.rng)
+                m.outcome_yes = self.rng.random() < (m.mid / 100.0)
+            # `gap_prob and ...` short-circuits so the default (0.0) consumes no
+            # rng draw -- keeps the demo runs/tests byte-for-byte deterministic.
+            if gap_prob and self.rng.random() < gap_prob:
+                m.gap = True
+                m.gap_ts = int(now + self.rng.uniform(0.6, 0.9) * horizon)
+            self.markets[tk] = m
         log.info("SimMarketData: %d synthetic same-day markets generated", n)
 
     def list_candidate_markets(self, now: float, max_close_ts: int) -> List[Market]:
