@@ -49,6 +49,37 @@ trade. Re-run a final paper check before going live.
 > Sanity check you're live: the logs say `LIVE mode: real-money trading against
 > <host>` and alerts are tagged `[LIVE]`.
 
+## 2b. Set your boundaries (do this before live)
+
+All limits live in `config.yaml`. The shipped defaults are deliberately small —
+**lower them to your bankroll; do not raise them to trade more.**
+
+| Setting | Default | What it bounds |
+|---|---|---|
+| `risk.max_position_usd` | 50 | Most you can have in one market |
+| `risk.max_total_exposure_usd` | 250 | Most you can have at risk across all markets |
+| `risk.max_concurrent_positions` | 3 | How many markets at once |
+| `risk.daily_loss_limit_pct` | 5 | Day's loss before it halts (and flattens) |
+| `risk.no_new_entries_before_close_min` | 10 | Quiet window before close (gap risk) |
+| `strategy.entry_min_cents` / `entry_max_cents` | 96 / 99 | The scalp band |
+| `strategy.stop_loss_cents` | 93 | Auto-sell trigger |
+| `strategy.take_profit_cents` | null | null = hold winners to settlement |
+| `strategy.max_hours_to_close` | 8 | Only markets closing this soon, same Eastern day |
+
+**Optional (advanced) — stronger exchange-level guarantees.** By default the bot
+sends plain resting limit orders and prevents order-stacking itself. If, during a
+demo run, you confirm the exact field values against <https://docs.kalshi.com>,
+you can set them in `config.yaml -> order:` for belt-and-suspenders safety:
+
+```yaml
+order:
+  time_in_force: <the immediate/fill-or-kill value>  # entries fill now or cancel, never rest
+  reduce_only: true                                   # a sell can only ever reduce a position
+```
+
+If you set a wrong value the exchange rejects the order (no bad trade — it just
+won't trade until you fix it), which is why these are off by default.
+
 ## 3. Deploy (always-on)
 
 **Docker:**

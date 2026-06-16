@@ -111,6 +111,33 @@ def test_list_markets_params_passed(tmp_path):
     assert sess.calls[0]["params"]["min_close_ts"] == 1
 
 
+def test_optional_order_controls_sent_when_configured(tmp_path):
+    p, _ = make_key(tmp_path)
+    sess = FakeSession([
+        FakeResp(200, {"order": {"order_id": "o1"}}),
+        FakeResp(200, {"order": {"order_id": "o2"}}),
+    ])
+    c = KalshiClient("https://host/trade-api/v2", "k", str(p), session=sess,
+                     time_in_force="fill_or_kill", reduce_only_sells=True)
+    c.create_order(OrderRequest("M", "buy", "yes", 98, 10, "cid-b"))
+    buy = sess.calls[0]["json"]
+    assert buy["time_in_force"] == "fill_or_kill"
+    assert "reduce_only" not in buy            # reduce_only applies to sells only
+    c.create_order(OrderRequest("M", "sell", "yes", 95, 10, "cid-s"))
+    sell = sess.calls[1]["json"]
+    assert sell["time_in_force"] == "fill_or_kill"
+    assert sell["reduce_only"] is True
+
+
+def test_optional_order_controls_omitted_by_default(tmp_path):
+    p, _ = make_key(tmp_path)
+    sess = FakeSession([FakeResp(200, {"order": {"order_id": "o1"}})])
+    c = KalshiClient("https://host/trade-api/v2", "k", str(p), session=sess)
+    c.create_order(OrderRequest("M", "buy", "yes", 98, 10, "cid"))
+    body = sess.calls[0]["json"]
+    assert "time_in_force" not in body and "reduce_only" not in body
+
+
 # --- orderbook parsing ----------------------------------------------------
 def test_parse_yes_top_translates_no_side_to_yes_ask():
     ob = {"yes": [[97, 300], [96, 100]], "no": [[3, 250], [2, 50]]}

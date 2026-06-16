@@ -73,6 +73,14 @@ class LiveBroker:
             avg_fill_cents=resp.get("yes_price"),
         )
 
+    def cancel_order(self, order_id: str) -> None:
+        if not order_id:
+            return
+        try:
+            self.client.cancel_order(order_id)
+        except Exception as exc:  # noqa: BLE001 -- best effort; surfaced via logs
+            log.warning("cancel_order %s failed (ignored): %s", order_id, exc)
+
     def settle_closed(self, data_source, now: float) -> None:
         # Live settlement is the exchange's job and shows up on reconcile.
         return None
@@ -156,6 +164,10 @@ class PaperBroker:
         log.info("paper SELL %s x%d @ %dc (proceeds $%.2f)", order.ticker, fill_count, fill_price, proceeds)
         return OrderResult(ok=True, order_id=f"paper-{order.client_order_id}", filled_count=fill_count, avg_fill_cents=fill_price)
 
+    def cancel_order(self, order_id: str) -> None:
+        # Paper fills are immediate, so there is never a resting order to cancel.
+        return None
+
     def settle_closed(self, data_source, now: float) -> None:
         """Settle any held market that has closed at its binary value (0 or 100)."""
         for ticker in list(self.positions.keys()):
@@ -196,10 +208,37 @@ class Executor:
         self.cfg = strategy_cfg
         self._seq = 0
         self._day_fn = day_fn
+        # In-flight (placed but not yet confirmed filled) resting orders. These let
+        # us avoid stacking duplicate entries / exits across cycles, which would
+        # otherwise breach the per-position and total-exposure caps once they fill.
+        self._inflight_entry: Dict[str, dict] = {}   # ticker -> {order_id, age}
+        self._inflight_exit: Dict[str, str] = {}      # ticker -> order_id
 
     def _next_id(self, action: str, ticker: str) -> str:
         self._seq += 1
         return make_client_order_id(action, ticker, self._seq, self._day_fn())
+
+    def has_inflight_entry(self, ticker: str) -> bool:
+        """True if we have an unfilled entry resting for this ticker (don't stack)."""
+        return ticker in self._inflight_entry
+
+    def reap_inflight_entries(self, account: AccountState, ttl_cycles: int) -> None:
+        """Resolve tracked entries each cycle: clear filled ones, cancel stale ones.
+
+        Call once per cycle after reconcile. If the position now exists the entry
+        filled (caps govern any further adds); otherwise we age it and, past the
+        TTL, cancel the resting order so it can't fill unexpectedly later.
+        """
+        for ticker in list(self._inflight_entry):
+            if ticker in account.positions:
+                self._inflight_entry.pop(ticker, None)
+                continue
+            rec = self._inflight_entry[ticker]
+            rec["age"] += 1
+            if rec["age"] > ttl_cycles:
+                log.info("entry for %s unfilled after %d cycles; cancelling", ticker, ttl_cycles)
+                self.broker.cancel_order(rec["order_id"])
+                self._inflight_entry.pop(ticker, None)
 
     # ----- reconciliation -------------------------------------------------
     def reconcile(self, now: float) -> AccountState:
@@ -217,9 +256,21 @@ class Executor:
             count=plan.count,
             client_order_id=self._next_id("buy", plan.ticker),
         )
-        return self.broker.create_order(order, market)
+        res = self.broker.create_order(order, market)
+        # If it didn't fully fill it may be resting -- track it so we don't place a
+        # second entry for the same market next cycle and breach the position cap.
+        if res.ok and res.filled_count < plan.count and res.order_id:
+            self._inflight_entry[plan.ticker] = {"order_id": res.order_id, "age": 0}
+        else:
+            self._inflight_entry.pop(plan.ticker, None)
+        return res
 
     def place_exit(self, decision: ExitDecision, position: Position, market: Market) -> OrderResult:
+        # Cancel any earlier resting sell for this ticker before repricing, so a
+        # falling market can't leave several resting sells that oversell on a bounce.
+        prior = self._inflight_exit.pop(position.ticker, None)
+        if prior:
+            self.broker.cancel_order(prior)
         order = OrderRequest(
             ticker=position.ticker,
             action="sell",
@@ -228,7 +279,10 @@ class Executor:
             count=decision.count,
             client_order_id=self._next_id("sell", position.ticker),
         )
-        return self.broker.create_order(order, market)
+        res = self.broker.create_order(order, market)
+        if res.ok and res.filled_count < decision.count and res.order_id:
+            self._inflight_exit[position.ticker] = res.order_id
+        return res
 
     def flatten_all(self, account: AccountState, market_by_ticker: Mapping[str, Market]) -> None:
         """Sell every open position to close with a marketable limit. Limit only."""
@@ -249,3 +303,6 @@ class Executor:
             )
             res = self.broker.create_order(order, market)
             log.info("flatten %s: filled %d", ticker, res.filled_count)
+        # We're closing/halting everything; drop any in-flight order tracking.
+        self._inflight_entry.clear()
+        self._inflight_exit.clear()

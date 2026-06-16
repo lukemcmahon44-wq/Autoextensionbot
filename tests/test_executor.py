@@ -1,6 +1,8 @@
-"""Executor tests: idempotent order ids, paper fills, settlement, reconcile."""
+"""Executor tests: idempotent order ids, paper fills, settlement, reconcile,
+and the in-flight (resting) order guards that prevent over-buying / over-selling.
+"""
 from src.executor import Executor, PaperBroker, make_client_order_id
-from src.models import EntryPlan, Market, OrderRequest, Position
+from src.models import AccountState, EntryPlan, Market, OrderRequest, OrderResult, Position
 from src.strategy import ExitDecision
 
 STRAT = {"max_exit_slippage_cents": 3}
@@ -135,6 +137,88 @@ def test_executor_flatten_all_sells_everything():
     ex.flatten_all(account, {"A": market("A", bid=97), "B": market("B", bid=96)})
     assert b.positions == {}
     assert b.balance_usd > 0
+
+
+# --- in-flight (resting) order guards -------------------------------------
+class FakeBroker:
+    """Broker stub that returns queued OrderResults so we can simulate resting orders."""
+
+    def __init__(self, account=None):
+        self.account = account or AccountState(1000.0, {})
+        self.created = []
+        self.cancelled = []
+        self.queue = []
+
+    def get_account(self):
+        return self.account
+
+    def create_order(self, order, market):
+        self.created.append(order)
+        if self.queue:
+            return self.queue.pop(0)
+        return OrderResult(ok=True, order_id="o-" + order.client_order_id, filled_count=order.count)
+
+    def cancel_order(self, order_id):
+        self.cancelled.append(order_id)
+
+    def settle_closed(self, ds, now):
+        pass
+
+
+def test_resting_entry_blocks_a_second_entry():
+    b = FakeBroker()
+    b.queue = [OrderResult(ok=True, order_id="resting-1", filled_count=0)]  # didn't fill
+    ex = Executor(b, SettleDS(), STRAT)
+    ex.place_entry(EntryPlan("M", 99, 10), market(ask=98))
+    assert ex.has_inflight_entry("M") is True       # would be skipped next cycle
+
+
+def test_full_fill_does_not_mark_inflight():
+    b = FakeBroker()
+    b.queue = [OrderResult(ok=True, order_id="o1", filled_count=10)]
+    ex = Executor(b, SettleDS(), STRAT)
+    ex.place_entry(EntryPlan("M", 99, 10), market(ask=98))
+    assert ex.has_inflight_entry("M") is False
+
+
+def test_reap_clears_inflight_once_position_appears():
+    b = FakeBroker()
+    b.queue = [OrderResult(ok=True, order_id="resting-1", filled_count=0)]
+    ex = Executor(b, SettleDS(), STRAT)
+    ex.place_entry(EntryPlan("M", 99, 10), market(ask=98))
+    account = AccountState(1000.0, {"M": Position("M", 10, 98)})  # it filled
+    ex.reap_inflight_entries(account, ttl_cycles=3)
+    assert ex.has_inflight_entry("M") is False
+    assert b.cancelled == []                          # nothing to cancel, it filled
+
+
+def test_reap_cancels_stale_unfilled_entry_after_ttl():
+    b = FakeBroker()
+    b.queue = [OrderResult(ok=True, order_id="resting-1", filled_count=0)]
+    ex = Executor(b, SettleDS(), STRAT)
+    ex.place_entry(EntryPlan("M", 99, 10), market(ask=98))
+    empty = AccountState(1000.0, {})
+    for _ in range(3):
+        ex.reap_inflight_entries(empty, ttl_cycles=3)   # age 1,2,3 -> still alive
+        assert ex.has_inflight_entry("M") is True
+    ex.reap_inflight_entries(empty, ttl_cycles=3)        # age 4 > ttl -> cancel
+    assert ex.has_inflight_entry("M") is False
+    assert b.cancelled == ["resting-1"]
+
+
+def test_exit_cancels_prior_resting_sell_before_repricing():
+    b = FakeBroker()
+    # First exit rests (bid gapped below limit), second exit reprices.
+    b.queue = [
+        OrderResult(ok=True, order_id="sell-1", filled_count=0),
+        OrderResult(ok=True, order_id="sell-2", filled_count=0),
+    ]
+    ex = Executor(b, SettleDS(), STRAT)
+    pos = Position("M", 10, 98)
+    ex.place_exit(ExitDecision("stop_loss", 90, 10), pos, market(bid=92))
+    ex.place_exit(ExitDecision("stop_loss", 88, 10), pos, market(bid=90))
+    assert b.cancelled == ["sell-1"]                  # old resting sell was cancelled
+    assert len(b.created) == 2
 
 
 def test_paper_snapshot_restore_roundtrip():

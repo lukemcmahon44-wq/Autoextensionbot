@@ -51,6 +51,13 @@ Every entry passes `RiskManager.check_entry(...)`; every loop calls
 | Concurrency cap | `risk.max_concurrent_positions` | Caps number of open markets |
 | Pre-close cutoff | `risk.no_new_entries_before_close_min` | No entries in the final minutes |
 | Error breaker | `risk.max_consecutive_errors` | Halts + alerts after repeated failures |
+| Same-day only | `strategy.settlement_timezone` | "Today" is the exchange (US/Eastern) day, so a UTC server can't pick up a market that settles the next trading day |
+| No order stacking | `loop.entry_order_ttl_cycles` | An entry that doesn't fill is tracked, never re-stacked, and cancelled after the TTL; resting stop-sells are cancelled before repricing so a bounce can't oversell |
+
+**Default boundaries (conservative — lower them to your bankroll; don't raise to "trade more"):**
+`max_position_usd 50`, `max_total_exposure_usd 250`, `max_concurrent_positions 3`,
+`daily_loss_limit_pct 5%` (flattens on hit), entry band `96–99`, stop `93`,
+`take_profit null` (hold winners to settlement), `max_hours_to_close 8` (same Eastern day).
 
 ## Quick start (safe paper dry-run)
 

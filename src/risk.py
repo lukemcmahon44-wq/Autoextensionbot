@@ -15,10 +15,11 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import Callable, Mapping, Optional
 
 from .models import AccountState, EntryPlan, Market
+from .timeutil import day_key, resolve_tz
 
 
 @dataclass
@@ -49,6 +50,11 @@ class RiskManager:
         self.kill_file = kill["file"]
         self.flatten_on_kill = bool(kill.get("flatten_on_kill", True))
 
+        # The daily loss limit resets on the exchange's trading day (US/Eastern
+        # for Kalshi). Falls back to UTC if no timezone is configured.
+        tz_name = config.get("strategy", {}).get("settlement_timezone")
+        self._tz = resolve_tz(tz_name) or timezone.utc
+
         # mutable safety state (persistable across restarts via state.json)
         self.consecutive_errors = 0
         self.day_key: Optional[str] = None
@@ -62,7 +68,7 @@ class RiskManager:
         return cls(settings.raw, now_fn=now_fn)
 
     def _today_key(self) -> str:
-        return datetime.fromtimestamp(self._now(), tz=timezone.utc).strftime("%Y-%m-%d")
+        return day_key(self._now(), self._tz)
 
     # ----- error circuit breaker -----------------------------------------
     def record_error(self) -> bool:

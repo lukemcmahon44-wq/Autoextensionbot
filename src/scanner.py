@@ -8,29 +8,24 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime
 from typing import Callable, List, Mapping
 
 from .marketdata import MarketDataSource
 from .models import Market
+from .timeutil import resolve_tz, same_calendar_day
 
 log = logging.getLogger("kalshi.scanner")
-
-
-def same_calendar_day(now: float, close_ts: float) -> bool:
-    """True if ``close_ts`` falls on the same local calendar day as ``now``.
-
-    The owner does not want anything settling later than today. We use the host's
-    local date; operators in a different timezone from the exchange should keep
-    ``max_hours_to_close`` conservative so this never straddles a day boundary.
-    """
-    return datetime.fromtimestamp(now).date() == datetime.fromtimestamp(close_ts).date()
 
 
 class Scanner:
     def __init__(self, strategy_cfg: Mapping, *, now_fn: Callable[[], float] = time.time):
         self.cfg = strategy_cfg
         self._now = now_fn
+        # The owner does not want anything settling later than today. "Today" is
+        # measured in the exchange's settlement timezone (US/Eastern for Kalshi),
+        # not the host clock, so a UTC server can't accidentally pick up a market
+        # that settles on the next Eastern trading day.
+        self._tz = resolve_tz(strategy_cfg.get("settlement_timezone"))
 
     def _passes_band_and_spread(self, m: Market) -> bool:
         if m.yes_ask is None or m.yes_bid is None:
@@ -60,7 +55,7 @@ class Scanner:
             if m.close_ts > window_end:
                 log.debug("skip %s: closes beyond max_hours_to_close", m.ticker)
                 continue
-            if not same_calendar_day(now, m.close_ts):
+            if not same_calendar_day(now, m.close_ts, self._tz):
                 log.debug("skip %s: settles later than today", m.ticker)
                 continue
             if not self._passes_band_and_spread(m):

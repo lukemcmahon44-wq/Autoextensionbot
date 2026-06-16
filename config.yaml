@@ -33,6 +33,11 @@ strategy:
   # Keep <= today's remaining hours for same-day settlement only.
   max_hours_to_close: 8
 
+  # "Same day" / the daily-loss reset are measured in this timezone, which should
+  # be the exchange's settlement timezone (Kalshi settles US/Eastern). This stops
+  # a UTC server from picking up a market that settles the NEXT Eastern day.
+  settlement_timezone: "America/New_York"
+
   # Entry band (YES ask, in cents). Default: buy near-certain YES at 96-99.
   entry_min_cents: 96
   entry_max_cents: 99
@@ -72,8 +77,21 @@ kill_switch:
 
 loop:
   poll_interval_sec: 30
-  reconcile_every_cycles: 10         # re-sync positions/balance from the exchange this often
+  reconcile_every_cycles: 10         # (informational) the loop reconciles EVERY cycle
   state_file: "state.json"
+  # Cancel an entry limit that hasn't filled after this many cycles, so a resting
+  # order can't fill unexpectedly later. Keeps live exposure to one order per market.
+  entry_order_ttl_cycles: 3
+
+# Optional exchange-level order controls. Left empty by default so the bot only
+# sends order fields known to be accepted (a plain resting limit). After you have
+# confirmed the exact values against https://docs.kalshi.com in a DEMO run, you
+# may opt in here for stronger guarantees:
+#   time_in_force: a value that makes entries fill-or-cancel instead of resting
+#   reduce_only:   true  -> a sell can only ever reduce a position, never flip it
+order:
+  time_in_force: null
+  reduce_only: null
 
 logging:
   level: "INFO"

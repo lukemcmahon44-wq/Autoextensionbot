@@ -32,7 +32,9 @@ protection against settlement risk. The position-size cap is the real control.
   don't have; "near-certain" is not certain.
 - **Reconciliation lag** — the bot treats the exchange as the source of truth and
   re-syncs each cycle, but between syncs local state can briefly diverge (fills,
-  partial fills, cancellations).
+  partial fills, cancellations). It tracks resting orders in memory to avoid
+  stacking duplicates; a crash can lose that tracking, but the per-position and
+  total-exposure caps remain the hard backstop on how much can ever be at risk.
 - **API / operational** — host or auth changes, rate limits, outages, clock skew,
   and bugs can all cause missed exits or stuck positions. The circuit breaker
   halts after repeated errors, but it is a backstop, not a guarantee.

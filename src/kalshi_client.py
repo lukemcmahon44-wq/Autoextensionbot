@@ -65,11 +65,20 @@ class KalshiClient:
         *,
         timeout: float = 10.0,
         session: Optional[requests.Session] = None,
+        time_in_force: Optional[str] = None,
+        reduce_only_sells: bool = False,
     ):
         self.api_base = api_base.rstrip("/")
         self.api_key_id = api_key_id
         self.timeout = timeout
         self.session = session or requests.Session()
+        # Optional exchange-level order controls. Left unset by default (plain
+        # resting limit) so we only send fields we know Kalshi accepts. After
+        # confirming the exact enum in a demo run you can opt in via config:
+        #   order.time_in_force  -> e.g. an immediate/FOK semantic so entries don't rest
+        #   order.reduce_only    -> guarantees a sell can only ever reduce a position
+        self.time_in_force = time_in_force or None
+        self.reduce_only_sells = bool(reduce_only_sells)
         with open(private_key_path, "rb") as fh:
             self._private_key = serialization.load_pem_private_key(fh.read(), password=None)
 
@@ -196,6 +205,11 @@ class KalshiClient:
             body["yes_price"] = order.price_cents
         else:
             body["no_price"] = order.price_cents
+        # Optional, opt-in controls (only sent when configured).
+        if self.time_in_force:
+            body["time_in_force"] = self.time_in_force
+        if self.reduce_only_sells and order.action == "sell":
+            body["reduce_only"] = True
         data = self._request("POST", "/portfolio/orders", json_body=body)
         return data.get("order", data)
 

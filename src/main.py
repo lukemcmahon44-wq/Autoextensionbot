@@ -73,6 +73,7 @@ class App:
         self.risk = RiskManager.from_settings(settings, now_fn=clock.now)
         self.scanner = Scanner(self.strategy_cfg, now_fn=clock.now)
         self.state_path = settings.loop["state_file"]
+        self.entry_ttl_cycles = int(settings.loop.get("entry_order_ttl_cycles", 3))
         self.last_summary_day: Optional[str] = None
         self._restore()
 
@@ -81,7 +82,14 @@ class App:
         s = self.settings
         if not (s.secrets.api_key_id and s.secrets.private_key_path):
             return None
-        return KalshiClient(s.api_base, s.secrets.api_key_id, s.secrets.private_key_path)
+        order_cfg = s.raw.get("order", {}) or {}
+        return KalshiClient(
+            s.api_base,
+            s.secrets.api_key_id,
+            s.secrets.private_key_path,
+            time_in_force=order_cfg.get("time_in_force"),
+            reduce_only_sells=bool(order_cfg.get("reduce_only", False)),
+        )
 
     def _build_market_layer(self):
         s = self.settings
@@ -144,6 +152,8 @@ class App:
 
         # 1) reconcile from the source of truth (exchange / paper broker).
         account = self.executor.reconcile(now)
+        # Resolve any resting orders from prior cycles against reconciled state.
+        self.executor.reap_inflight_entries(account, self.entry_ttl_cycles)
         marks: Dict[str, Optional[int]] = {
             t: self.data_source.orderbook_top(t)[0] for t in account.positions
         }
@@ -194,7 +204,10 @@ class App:
     def _scan_and_enter(self, account):
         candidates = self.scanner.scan(self.data_source)
         for m in candidates:
-            account = self.executor.broker.get_account()  # refresh caps each entry
+            # Don't stack a second order on a market whose entry is still resting.
+            if self.executor.has_inflight_entry(m.ticker):
+                log.info("skip %s: entry already resting", m.ticker)
+                continue
             remaining = self.risk.remaining_exposure_budget_usd(account)
             plan = plan_entry(
                 m, account, self.strategy_cfg,
@@ -211,6 +224,7 @@ class App:
             if res.ok and res.filled_count > 0:
                 self.notifier.trade("buy", m.ticker, res.filled_count,
                                     res.avg_fill_cents or plan.limit_price_cents)
+                account = self.executor.broker.get_account()  # refresh caps after a fill
             elif not res.ok:
                 log.warning("entry order failed %s: %s", m.ticker, res.error)
 
