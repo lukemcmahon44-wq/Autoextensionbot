@@ -36,6 +36,11 @@ class Notifier:
         suffix = f" ({reason})" if reason else ""
         self._send(f"TRADE {action.upper()} {ticker} x{count} @ {price_cents}c{suffix}")
 
+    def order(self, action: str, ticker: str, count: int, price_cents: int) -> None:
+        """A working (submitted, not-yet-confirmed-filled) order -- used in live
+        mode where limit orders fill asynchronously after the next reconcile."""
+        self._send(f"ORDER {action.upper()} {ticker} x{count} @ {price_cents}c (working)")
+
     def halt(self, reason: str, flattened: bool = False) -> None:
         self._send(f"HALT: {reason}" + (" — flattened all positions" if flattened else ""))
 

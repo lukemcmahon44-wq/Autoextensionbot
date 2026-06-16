@@ -3,9 +3,7 @@
 If a change here is needed because behavior legitimately changed, the bar is
 that the new behavior is *at least as safe* as the old one.
 """
-import os
 
-import pytest
 
 from src.models import AccountState, EntryPlan, Market, Position
 from src.risk import RiskManager

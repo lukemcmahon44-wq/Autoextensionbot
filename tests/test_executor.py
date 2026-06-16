@@ -206,6 +206,17 @@ def test_reap_cancels_stale_unfilled_entry_after_ttl():
     assert b.cancelled == ["resting-1"]
 
 
+def test_inflight_entry_counts_as_pseudo_position():
+    b = FakeBroker()
+    b.queue = [OrderResult(ok=True, order_id="resting-1", filled_count=0)]
+    ex = Executor(b, SettleDS(), STRAT)
+    ex.place_entry(EntryPlan("M", 98, 10), market(ask=98))
+    pseudo = ex.inflight_entry_positions()
+    assert pseudo["M"].count == 10
+    assert pseudo["M"].avg_price_cents == 98
+    assert abs(pseudo["M"].cost_usd - 9.8) < 1e-6
+
+
 def test_exit_cancels_prior_resting_sell_before_repricing():
     b = FakeBroker()
     # First exit rests (bid gapped below limit), second exit reprices.

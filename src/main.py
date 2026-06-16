@@ -20,7 +20,7 @@ from . import config as config_mod
 from .executor import Executor, LiveBroker, PaperBroker
 from .kalshi_client import KalshiClient
 from .marketdata import LiveMarketData, SimMarketData, set_sim_clock
-from .models import Market
+from .models import AccountState, Market, Position, cents_to_usd
 from .notifier import Notifier
 from .risk import RiskManager
 from .scanner import Scanner
@@ -191,6 +191,7 @@ class App:
             # Kill switch or error breaker: do nothing this cycle (human takes over).
             log.warning("global halt active: %s", halt)
             self.notifier.halt(halt or "global halt")
+            self._persist()
             return
 
         # 3) manage exits (stops / take-profit) on existing positions.
@@ -199,10 +200,14 @@ class App:
             decision = should_exit(pos, market, self.strategy_cfg)
             if decision is None:
                 continue
+            new_exit = not self.executor.has_inflight_exit(ticker)
             res = self.executor.place_exit(decision, pos, market)
             if res.ok and res.filled_count > 0:
                 self.notifier.trade("sell", ticker, res.filled_count,
                                     res.avg_fill_cents or decision.limit_price_cents, decision.reason)
+            elif res.ok and new_exit:
+                # Live: the sell is working and will fill asynchronously.
+                self.notifier.order("sell", ticker, decision.count, decision.limit_price_cents)
             account = self.executor.broker.get_account()
 
         # 4) entries (only if new entries are not halted).
@@ -215,31 +220,57 @@ class App:
         self._persist()
 
     def _scan_and_enter(self, account):
-        candidates = self.scanner.scan(self.data_source)
-        for m in candidates:
+        # Work on a copy we annotate with this cycle's just-placed orders. Live
+        # fills are async, so without this several entries placed in one cycle
+        # would each be sized against the same budget and could collectively
+        # breach the exposure/position/concurrency caps once they fill.
+        working = AccountState(account.balance_usd, dict(account.positions))
+        # Count still-resting prior-cycle entries toward the caps too (the exchange
+        # already reserves their funds, so we don't touch the reconciled balance).
+        for tk, pos in self.executor.inflight_entry_positions().items():
+            working.positions.setdefault(tk, pos)
+        for m in self.scanner.scan(self.data_source):
             # Don't stack a second order on a market whose entry is still resting.
             if self.executor.has_inflight_entry(m.ticker):
                 log.info("skip %s: entry already resting", m.ticker)
                 continue
-            remaining = self.risk.remaining_exposure_budget_usd(account)
+            remaining = self.risk.remaining_exposure_budget_usd(working)
             plan = plan_entry(
-                m, account, self.strategy_cfg,
+                m, working, self.strategy_cfg,
                 max_position_usd=self.risk.max_position_usd,
                 remaining_exposure_usd=remaining,
             )
             if plan is None:
                 continue
-            decision = self.risk.check_entry(plan, account, m)
+            decision = self.risk.check_entry(plan, working, m)
             if not decision:
                 log.info("entry blocked %s: %s", m.ticker, decision.reason)
                 continue
             res = self.executor.place_entry(plan, m)
-            if res.ok and res.filled_count > 0:
+            if not res.ok:
+                log.warning("entry order failed %s: %s", m.ticker, res.error)
+                continue
+            # Reflect the committed order in the working account (cost basis at the
+            # limit) so the caps hold for the rest of this cycle, fill or not.
+            self._commit_to_working(working, plan)
+            if res.filled_count > 0:
                 self.notifier.trade("buy", m.ticker, res.filled_count,
                                     res.avg_fill_cents or plan.limit_price_cents)
-                account = self.executor.broker.get_account()  # refresh caps after a fill
-            elif not res.ok:
-                log.warning("entry order failed %s: %s", m.ticker, res.error)
+            else:
+                # Live limit orders fill asynchronously -- report the working order
+                # now; the fill shows up in the next reconcile + daily summary.
+                self.notifier.order("buy", m.ticker, plan.count, plan.limit_price_cents)
+
+    @staticmethod
+    def _commit_to_working(working: AccountState, plan) -> None:
+        existing = working.positions.get(plan.ticker)
+        if existing:
+            total = existing.count + plan.count
+            avg = round((existing.cost_usd + plan.cost_usd) / cents_to_usd(1) / total)
+            working.positions[plan.ticker] = Position(plan.ticker, total, max(1, min(99, avg)))
+        else:
+            working.positions[plan.ticker] = Position(plan.ticker, plan.count, plan.limit_price_cents)
+        working.balance_usd -= plan.cost_usd
 
     def _maybe_daily_summary(self, equity: float, positions: int):
         day = self.risk.day_key

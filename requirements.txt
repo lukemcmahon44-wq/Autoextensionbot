@@ -11,3 +11,4 @@ tzdata==2024.1
 
 # Dev / test only
 pytest==8.3.3
+ruff==0.15.8

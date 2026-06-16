@@ -222,6 +222,18 @@ class Executor:
         """True if we have an unfilled entry resting for this ticker (don't stack)."""
         return ticker in self._inflight_entry
 
+    def has_inflight_exit(self, ticker: str) -> bool:
+        """True if a sell for this ticker is already working (avoids alert spam)."""
+        return ticker in self._inflight_exit
+
+    def inflight_entry_positions(self) -> Dict[str, Position]:
+        """Resting (unfilled) entries as pseudo-positions, so their committed cost
+        counts toward the exposure/concurrency caps until they fill or are reaped."""
+        return {
+            t: Position(t, r["count"], r["price_cents"])
+            for t, r in self._inflight_entry.items()
+        }
+
     def reap_inflight_entries(self, account: AccountState, ttl_cycles: int) -> None:
         """Resolve tracked entries each cycle: clear filled ones, cancel stale ones.
 
@@ -257,10 +269,14 @@ class Executor:
             client_order_id=self._next_id("buy", plan.ticker),
         )
         res = self.broker.create_order(order, market)
-        # If it didn't fully fill it may be resting -- track it so we don't place a
-        # second entry for the same market next cycle and breach the position cap.
+        # If it didn't fully fill it may be resting -- track it (with its size) so we
+        # don't place a second entry for the same market next cycle and so its
+        # committed cost still counts toward the caps.
         if res.ok and res.filled_count < plan.count and res.order_id:
-            self._inflight_entry[plan.ticker] = {"order_id": res.order_id, "age": 0}
+            self._inflight_entry[plan.ticker] = {
+                "order_id": res.order_id, "age": 0,
+                "count": plan.count, "price_cents": plan.limit_price_cents,
+            }
         else:
             self._inflight_entry.pop(plan.ticker, None)
         return res
