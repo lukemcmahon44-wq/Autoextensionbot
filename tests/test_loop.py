@@ -213,6 +213,18 @@ def test_no_bid_position_marks_at_last_bid_not_cost(config, tmp_path, monkeypatc
     assert app.risk.last_equity == pytest.approx(95.0, abs=1.0)
 
 
+def test_daily_order_cap_limits_orders_in_a_cycle(config, tmp_path, monkeypatch):
+    # With a cap of 1, even a cycle full of candidates must place only one entry.
+    config["mode"]["sim_markets"] = 8
+    config["risk"]["max_orders_per_day"] = 1
+    app = _boot(config, tmp_path, monkeypatch)
+    app.executor.broker = RestingBroker(10_000.0)
+    app.notifier = RecordingNotifier()
+    app.run_cycle()
+    buys = [o for o in app.executor.broker.created if o.action == "buy"]
+    assert len(buys) == 1, f"order cap should allow exactly 1 entry, got {len(buys)}"
+
+
 def test_loop_daily_limit_halts_entries(config, tmp_path, monkeypatch):
     app = _boot(config, tmp_path, monkeypatch)
     # Force the daily loss latch on, then ensure a cycle opens no new positions.

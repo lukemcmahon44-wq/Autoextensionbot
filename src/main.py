@@ -103,7 +103,7 @@ class App:
         # ---- paper mode ----
         source_pref = s.mode.get("paper_data_source", "auto")
         start_balance = _env_float("PAPER_START_BALANCE", float(s.mode.get("paper_start_balance", 1000.0)))
-        broker = PaperBroker(start_balance)
+        broker = PaperBroker(start_balance, fee_rate=float(s.mode.get("paper_fee_rate", 0.0)))
 
         if source_pref in ("auto", "live"):
             client = self._make_client()
@@ -249,6 +249,9 @@ class App:
                 avg = round((cur.cost_usd + pos.cost_usd) / cents_to_usd(1) / total)
                 working.positions[tk] = Position(tk, total, max(1, min(99, avg)))
         for m in self.scanner.scan(self.data_source):
+            if self.risk.orders_exhausted():
+                log.info("daily order cap reached; no more entries this cycle")
+                break
             # Don't stack a second order on a market whose entry is still resting.
             if self.executor.has_inflight_entry(m.ticker):
                 log.info("skip %s: entry already resting", m.ticker)
@@ -269,6 +272,7 @@ class App:
             if not res.ok:
                 log.warning("entry order failed %s: %s", m.ticker, res.error)
                 continue
+            self.risk.record_order()   # count toward the daily order-cap throttle
             # Reflect the committed order in the working account (cost basis at the
             # limit) so the caps hold for the rest of this cycle, fill or not.
             self._commit_to_working(working, plan)

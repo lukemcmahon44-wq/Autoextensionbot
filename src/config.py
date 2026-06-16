@@ -114,6 +114,8 @@ def _validate_shape(raw: Dict[str, Any]) -> None:
         raise ConfigError("risk.no_new_entries_before_close_min must be >= 0")
     if r["max_consecutive_errors"] < 1:
         raise ConfigError("risk.max_consecutive_errors must be >= 1")
+    if r.get("max_orders_per_day", 0) < 0:
+        raise ConfigError("risk.max_orders_per_day must be >= 0 (0 = unlimited)")
 
 
 def _load_private_key_or_raise(path: Optional[str]):

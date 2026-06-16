@@ -50,14 +50,16 @@ Every entry passes `RiskManager.check_entry(...)`; every loop calls
 | Total exposure cap | `risk.max_total_exposure_usd` | Caps summed cost basis |
 | Concurrency cap | `risk.max_concurrent_positions` | Caps number of open markets |
 | Pre-close cutoff | `risk.no_new_entries_before_close_min` | No entries in the final minutes |
-| Error breaker | `risk.max_consecutive_errors` | Halts + alerts after repeated failures |
+| Error breaker | `risk.max_consecutive_errors` | Halts entries + alerts after repeated failures; self-clears |
+| Daily order cap | `risk.max_orders_per_day` | Hard ceiling on entries/day — runaway guard (0 = unlimited) |
 | Same-day only | `strategy.settlement_timezone` | "Today" is the exchange (US/Eastern) day, so a UTC server can't pick up a market that settles the next trading day |
 | No order stacking | `loop.entry_order_ttl_cycles` | An entry that doesn't fill is tracked, never re-stacked, and cancelled after the TTL; resting stop-sells are cancelled before repricing so a bounce can't oversell |
 
 **Default boundaries (conservative — lower them to your bankroll; don't raise to "trade more"):**
 `max_position_usd 50`, `max_total_exposure_usd 250`, `max_concurrent_positions 3`,
 `daily_loss_limit_pct 5%` (flattens on hit), entry band `96–99`, stop `93`,
-`take_profit null` (hold winners to settlement), `max_hours_to_close 8` (same Eastern day).
+`take_profit null` (hold winners to settlement), `max_hours_to_close 8` (same Eastern day),
+`max_orders_per_day 100`.
 
 ## Quick start (safe paper dry-run)
 
@@ -101,8 +103,9 @@ python -m src.backtest --trials 400 --start-balance 1000
 
 Runs the **real** decision code (scanner, sizing, stop, risk caps) over hundreds
 of simulated same-day sessions and prints the distribution of outcomes. The model
-is deliberately honest — an *efficient market with no edge* plus **gap risk**
-(`--gap-prob`, favorites that jump through the stop). A representative run:
+is deliberately honest — an *efficient market with no edge*, plus **gap risk**
+(`--gap-prob`, favorites that jump through the stop) and **Kalshi-style fees**
+(`--fee-rate`, ~`rate·p·(1−p)` per contract). A representative run:
 ~95% of days are small wins, but the worst ~5% of days lose multiples of a
 typical win, **capped near your `daily_loss_limit_pct`** by the flatten. That
 fat-tailed shape — not the mean — is the point. It is a synthetic, fee-free

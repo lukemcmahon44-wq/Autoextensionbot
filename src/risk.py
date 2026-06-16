@@ -45,6 +45,9 @@ class RiskManager:
         self.flatten_on_daily_limit = bool(risk["flatten_on_daily_limit"])
         self.no_new_entries_before_close_sec = int(risk["no_new_entries_before_close_min"]) * 60
         self.max_consecutive_errors = int(risk["max_consecutive_errors"])
+        # Hard ceiling on entry orders placed per trading day (runaway guard).
+        # 0 / unset = unlimited.
+        self.max_orders_per_day = int(risk.get("max_orders_per_day", 0) or 0)
 
         # kill switch
         self.kill_file = kill["file"]
@@ -61,6 +64,7 @@ class RiskManager:
         self.day_start_equity: Optional[float] = None
         self.daily_limit_hit = False
         self.last_equity: Optional[float] = None
+        self.orders_today = 0
 
     # ----- construction helpers ------------------------------------------
     @classmethod
@@ -83,6 +87,14 @@ class RiskManager:
     def circuit_broken(self) -> bool:
         return self.consecutive_errors >= self.max_consecutive_errors
 
+    # ----- daily order throttle ------------------------------------------
+    def record_order(self) -> None:
+        """Count one entry order placed today (call after a successful submit)."""
+        self.orders_today += 1
+
+    def orders_exhausted(self) -> bool:
+        return self.max_orders_per_day > 0 and self.orders_today >= self.max_orders_per_day
+
     # ----- kill switch ----------------------------------------------------
     def kill_switch_active(self) -> bool:
         return os.path.exists(self.kill_file)
@@ -99,6 +111,7 @@ class RiskManager:
             self.day_key = today
             self.day_start_equity = current_equity
             self.daily_limit_hit = False
+            self.orders_today = 0          # fresh order budget each trading day
         self.last_equity = current_equity
         if self.day_start_equity and self.day_start_equity > 0:
             pnl_pct = (current_equity - self.day_start_equity) / self.day_start_equity * 100.0
@@ -117,6 +130,8 @@ class RiskManager:
             return f"kill switch present ({self.kill_file})"
         if self.daily_limit_hit:
             return f"daily loss limit hit ({self.daily_loss_limit_pct:.1f}%)"
+        if self.orders_exhausted():
+            return f"daily order cap reached ({self.max_orders_per_day})"
         if self.circuit_broken():
             return f"error circuit breaker ({self.consecutive_errors} consecutive errors)"
         return None
@@ -200,6 +215,7 @@ class RiskManager:
             "day_start_equity": self.day_start_equity,
             "daily_limit_hit": self.daily_limit_hit,
             "last_equity": self.last_equity,
+            "orders_today": self.orders_today,
         }
 
     def restore(self, snap: Mapping) -> None:
@@ -210,3 +226,4 @@ class RiskManager:
         self.day_start_equity = snap.get("day_start_equity")
         self.daily_limit_hit = bool(snap.get("daily_limit_hit", False))
         self.last_equity = snap.get("last_equity")
+        self.orders_today = int(snap.get("orders_today", 0))

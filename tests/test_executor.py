@@ -56,6 +56,14 @@ def test_paper_buy_fills_and_debits():
     assert b.balance_usd < 100.0
 
 
+def test_paper_fee_charged_on_fills():
+    no_fee = PaperBroker(100.0, fee_rate=0.0)
+    with_fee = PaperBroker(100.0, fee_rate=0.07)
+    no_fee.create_order(OrderRequest("M", "buy", "yes", 99, 10, "a"), market(ask=98))
+    with_fee.create_order(OrderRequest("M", "buy", "yes", 99, 10, "b"), market(ask=98))
+    assert with_fee.balance_usd < no_fee.balance_usd   # a fee makes you poorer
+
+
 def test_paper_buy_idempotent_on_duplicate_id():
     b = PaperBroker(100.0)
     order = OrderRequest("M", "buy", "yes", 99, 10, "cid-dup")

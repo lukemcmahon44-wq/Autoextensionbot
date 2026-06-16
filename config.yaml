@@ -70,6 +70,10 @@ risk:
   # Consecutive transient errors before halting + alerting.
   max_consecutive_errors: 5
 
+  # Hard ceiling on entry orders placed per trading day -- a runaway guard against
+  # a bug or pathological market causing excessive trading. 0 = unlimited.
+  max_orders_per_day: 100
+
 kill_switch:
   # Drop a file with this name in the repo root to FREEZE all automated activity
   # within one poll cycle (no new entries AND no automated exits -- a human takes

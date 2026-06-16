@@ -69,7 +69,7 @@ def _day_start(settings) -> float:
 
 
 def simulate_day(base_settings, *, seed: int, start_balance: float, steps: int = 40,
-                 gap_prob: float = 0.15) -> TrialResult:
+                 gap_prob: float = 0.15, fee_rate: float = 0.07) -> TrialResult:
     s = copy.deepcopy(base_settings)
     s.paper = True
     s.api_base = s.raw["mode"]["api_base_demo"]
@@ -79,6 +79,7 @@ def simulate_day(base_settings, *, seed: int, start_balance: float, steps: int =
         sim_win_prob=None,            # efficient-market baseline (no edge)
         sim_gap_prob=gap_prob,        # tail risk: favorites that gap to 0 through the stop
         paper_start_balance=start_balance,
+        paper_fee_rate=fee_rate,      # Kalshi-style fee ~ rate * p * (1-p) per contract
     )
 
     start = _day_start(s)
@@ -110,10 +111,11 @@ def simulate_day(base_settings, *, seed: int, start_balance: float, steps: int =
 
 
 def run_backtest(base_settings, *, trials: int, start_balance: float, steps: int = 40,
-                 base_seed: int = 1000, gap_prob: float = 0.15) -> List[TrialResult]:
+                 base_seed: int = 1000, gap_prob: float = 0.15,
+                 fee_rate: float = 0.07) -> List[TrialResult]:
     return [
         simulate_day(base_settings, seed=base_seed + i, start_balance=start_balance,
-                     steps=steps, gap_prob=gap_prob)
+                     steps=steps, gap_prob=gap_prob, fee_rate=fee_rate)
         for i in range(trials)
     ]
 
@@ -168,6 +170,8 @@ def main() -> None:
     parser.add_argument("--markets", type=int, default=8, help="simulated markets per day")
     parser.add_argument("--gap-prob", type=float, default=0.15,
                         help="fraction of resolutions that GAP through the stop (tail risk)")
+    parser.add_argument("--fee-rate", type=float, default=0.07,
+                        help="Kalshi-style fee rate; fee ~ rate*p*(1-p)/contract (0 to disable)")
     parser.add_argument("--seed", type=int, default=1000)
     args = parser.parse_args()
 
@@ -179,7 +183,9 @@ def main() -> None:
     settings.raw["mode"]["sim_markets"] = args.markets
 
     results = run_backtest(settings, trials=args.trials, start_balance=args.start_balance,
-                           steps=args.steps, base_seed=args.seed, gap_prob=args.gap_prob)
+                           steps=args.steps, base_seed=args.seed, gap_prob=args.gap_prob,
+                           fee_rate=args.fee_rate)
+    print(f"(model: efficient-market, gap_prob={args.gap_prob}, fee_rate={args.fee_rate})")
     _print_report(summarize(results), args.start_balance)
 
 

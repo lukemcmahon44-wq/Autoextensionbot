@@ -188,14 +188,48 @@ def test_consecutive_error_breaker(config):
     assert rm.circuit_broken() is False
 
 
+# --- daily order throttle -------------------------------------------------
+def test_daily_order_cap_blocks_entries(config):
+    config["risk"]["max_orders_per_day"] = 2
+    rm = make_rm(config)
+    rm.update_daily_pnl(1000.0)
+    assert rm.orders_exhausted() is False
+    rm.record_order()
+    rm.record_order()
+    assert rm.orders_exhausted() is True
+    assert "order cap" in rm.halt_reason()
+    assert rm.check_entry(plan(), account(), open_market()).allowed is False
+
+
+def test_daily_order_cap_zero_means_unlimited(config):
+    config["risk"]["max_orders_per_day"] = 0
+    rm = make_rm(config)
+    for _ in range(1000):
+        rm.record_order()
+    assert rm.orders_exhausted() is False
+
+
+def test_order_cap_resets_next_day(config):
+    config["risk"]["max_orders_per_day"] = 1
+    rm = make_rm(config)
+    rm.update_daily_pnl(1000.0)
+    rm.record_order()
+    assert rm.orders_exhausted() is True
+    rm._now = lambda: FIXED_NOW + 86400
+    rm.update_daily_pnl(1000.0)               # new day -> fresh order budget
+    assert rm.orders_exhausted() is False
+
+
 # --- persistence ----------------------------------------------------------
 def test_snapshot_restore_roundtrip(config):
     rm = make_rm(config)
     rm.update_daily_pnl(1000.0)
     rm.record_error()
+    rm.record_order()
     snap = rm.snapshot()
     rm2 = make_rm(config)
     rm2.restore(snap)
     assert rm2.consecutive_errors == 1
     assert rm2.day_start_equity == 1000.0
     assert rm2.day_key == snap["day_key"]
+    assert rm2.orders_today == 1

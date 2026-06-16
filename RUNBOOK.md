@@ -69,6 +69,7 @@ All limits live in `config.yaml`. The shipped defaults are deliberately small â€
 | `risk.max_concurrent_positions` | 3 | How many markets at once |
 | `risk.daily_loss_limit_pct` | 5 | Day's loss before it halts (and flattens) |
 | `risk.no_new_entries_before_close_min` | 10 | Quiet window before close (gap risk) |
+| `risk.max_orders_per_day` | 100 | Hard ceiling on entries per day (runaway guard; 0 = off) |
 | `strategy.entry_min_cents` / `entry_max_cents` | 96 / 99 | The scalp band |
 | `strategy.stop_loss_cents` | 93 | Auto-sell trigger |
 | `strategy.take_profit_cents` | null | null = hold winners to settlement |

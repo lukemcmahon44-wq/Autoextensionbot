@@ -106,10 +106,17 @@ class LiveBroker:
 class PaperBroker:
     """Simulates fills against the current book. No real-money endpoint, ever."""
 
-    def __init__(self, starting_balance_usd: float = 1000.0):
+    def __init__(self, starting_balance_usd: float = 1000.0, fee_rate: float = 0.0):
         self.balance_usd = float(starting_balance_usd)
         self.positions: Dict[str, Position] = {}
         self._seen: Dict[str, OrderResult] = {}  # client_order_id -> result (idempotency)
+        # Kalshi-style trading fee ~ fee_rate * price * (1 - price) per contract,
+        # charged on each execution. 0.0 = no fees (default; demo/tests unchanged).
+        self.fee_rate = float(fee_rate)
+
+    def _fee_usd(self, count: int, price_cents: int) -> float:
+        p = cents_to_usd(price_cents)
+        return self.fee_rate * count * p * (1.0 - p)
 
     def get_account(self) -> AccountState:
         # Return a copy so callers can't mutate broker state by accident.
@@ -148,7 +155,7 @@ class PaperBroker:
         if fill_count <= 0:
             return OrderResult(ok=True, order_id=f"paper-{order.client_order_id}", filled_count=0)
 
-        self.balance_usd -= cost
+        self.balance_usd -= cost + self._fee_usd(fill_count, fill_price)
         existing = self.positions.get(order.ticker)
         if existing:
             total = existing.count + fill_count
@@ -171,7 +178,7 @@ class PaperBroker:
         if fill_count <= 0:
             return OrderResult(ok=True, order_id=f"paper-{order.client_order_id}", filled_count=0)
         proceeds = fill_count * cents_to_usd(fill_price)
-        self.balance_usd += proceeds
+        self.balance_usd += proceeds - self._fee_usd(fill_count, fill_price)
         remaining = pos.count - fill_count
         if remaining > 0:
             self.positions[order.ticker] = Position(order.ticker, remaining, pos.avg_price_cents)
