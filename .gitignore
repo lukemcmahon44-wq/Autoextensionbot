@@ -1,0 +1,18 @@
+# Secrets and runtime artifacts -- NEVER commit these.
+.env
+*.pem
+*.key
+KILL
+state.json
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
