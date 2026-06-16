@@ -181,6 +181,10 @@ class KalshiClient:
             out.extend(page)
             if not cursor:
                 break
+        else:
+            # Loop exhausted without a final empty cursor -> we may have truncated.
+            log.warning("list_all_markets hit the 100-page cap (%d markets); "
+                        "universe may be truncated", len(out))
         return out
 
     def get_orderbook(self, ticker: str, depth: int = 10) -> Dict[str, Any]:

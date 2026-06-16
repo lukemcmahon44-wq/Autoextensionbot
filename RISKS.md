@@ -54,6 +54,23 @@ position, per day, and in aggregate. They do **not** make the strategy
 profitable, and they cannot prevent a loss inside the caps you configured. If you
 widen the caps, you widen the damage a bad day can do.
 
+A few specifics worth understanding:
+
+- **Kill switch vs. daily-loss limit are different.** The kill switch (`KILL`
+  file) **freezes all automated activity** — no new entries *and* no automated
+  exits — and a human takes over; it flattens only if `flatten_on_kill: true`
+  (the default). The daily-loss limit only **halts new entries** while still
+  managing exits (and flattens if `flatten_on_daily_limit: true`).
+- **The error breaker self-clears.** Repeated errors halt new entries and alert,
+  but protective stops keep running once the exchange is reachable again, and the
+  breaker clears after one healthy cycle — it won't silently brick the bot.
+- **Marking an illiquid/gapped position.** Equity marks a held position off its
+  last seen YES bid. If a favorite gaps **straight** to no-bid, the latent loss
+  isn't fully reflected in the daily-loss equity until the position **settles**
+  (same day) — so on such a day the daily limit may engage at settlement rather
+  than the instant of the gap. This is inherent: there is no tradeable price to
+  mark against. It is, again, why the **position-size cap** is the real control.
+
 ## Stopping it fast
 
 Drop a file named `KILL` in the working directory. Within one poll cycle the bot

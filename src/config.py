@@ -18,6 +18,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+from .timeutil import resolve_tz
+
 try:  # python-dotenv is optional at import time; .env is convenience only.
     from dotenv import load_dotenv
 except Exception:  # pragma: no cover
@@ -160,6 +162,15 @@ def load_settings(config_path: str = "config.yaml") -> Settings:
             )
         # Parse the key now; raises ConfigError if missing/unreadable/invalid.
         _load_private_key_or_raise(secrets.private_key_path)
+        # The same-day filter and daily reset must use the exchange timezone. If it
+        # can't be resolved (e.g. tzdata missing on a slim container) we would
+        # silently fall back to host-local time -- refuse to start live instead.
+        tz_name = raw["strategy"].get("settlement_timezone")
+        if tz_name and resolve_tz(tz_name) is None:
+            raise ConfigError(
+                f"settlement_timezone {tz_name!r} is unavailable (install tzdata). "
+                "Refusing to start live with the wrong day boundary."
+            )
 
     return Settings(
         raw=raw,

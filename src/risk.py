@@ -72,9 +72,10 @@ class RiskManager:
 
     # ----- error circuit breaker -----------------------------------------
     def record_error(self) -> bool:
-        """Count one transient failure. Returns True if the breaker is now tripped."""
+        """Count one transient failure. Returns True only on the cycle that *crosses*
+        the threshold (so the caller alerts once, not every failing cycle)."""
         self.consecutive_errors += 1
-        return self.circuit_broken()
+        return self.consecutive_errors == self.max_consecutive_errors
 
     def record_success(self) -> None:
         self.consecutive_errors = 0
@@ -121,11 +122,13 @@ class RiskManager:
         return None
 
     def global_halt(self) -> bool:
-        """Kill switch or error breaker => stop *everything* (entries and
-        discretionary exits); a human takes over. A pure daily-loss halt only
-        blocks new entries, so it is intentionally excluded here.
+        """Kill switch => freeze EVERYTHING (no entries, no automated exits); a
+        human takes over. The error breaker is intentionally *not* here: it blocks
+        new entries (via ``halt_reason``) but must NOT abandon protective stops, and
+        it must clear itself once the exchange is reachable again. A pure daily-loss
+        halt also only blocks entries.
         """
-        return self.kill_switch_active() or self.circuit_broken()
+        return self.kill_switch_active()
 
     def should_flatten(self) -> bool:
         """Whether the current halt condition also demands flattening positions."""

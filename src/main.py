@@ -76,6 +76,7 @@ class App:
         self.state_path = settings.loop["state_file"]
         self.entry_ttl_cycles = int(settings.loop.get("entry_order_ttl_cycles", 3))
         self.last_summary_day: Optional[str] = None
+        self.last_bid: Dict[str, int] = {}   # last seen YES bid per held ticker
         self._restore()
 
     # ----- wiring ---------------------------------------------------------
@@ -167,9 +168,16 @@ class App:
         account = self.executor.reconcile(now)
         # Resolve any resting orders from prior cycles against reconciled state.
         self.executor.reap_inflight_entries(account, self.entry_ttl_cycles)
-        marks: Dict[str, Optional[int]] = {
-            t: self.data_source.orderbook_top(t)[0] for t in account.positions
-        }
+        marks: Dict[str, Optional[int]] = {}
+        for t in account.positions:
+            bid = self.data_source.orderbook_top(t)[0]
+            if bid is not None:
+                self.last_bid[t] = bid
+            # If a held position has no live bid (illiquid / gapped), mark off the
+            # LAST bid we saw -- so a gap toward 0 still shows in equity and can trip
+            # the daily-loss limit, instead of hiding at cost basis until settlement.
+            marks[t] = bid if bid is not None else self.last_bid.get(t)
+        self.last_bid = {t: v for t, v in self.last_bid.items() if t in account.positions}
         equity = account.equity_usd(marks)
         self.risk.update_daily_pnl(equity)
         log.info(
@@ -228,7 +236,16 @@ class App:
         # Count still-resting prior-cycle entries toward the caps too (the exchange
         # already reserves their funds, so we don't touch the reconciled balance).
         for tk, pos in self.executor.inflight_entry_positions().items():
-            working.positions.setdefault(tk, pos)
+            cur = working.positions.get(tk)
+            if cur is None:
+                working.positions[tk] = pos
+            else:
+                # Conservatively ADD the resting order on top of the reconciled
+                # position. A rare partial-fill overlap double-counts the filled
+                # part -- which only tightens the caps (safe), never loosens them.
+                total = cur.count + pos.count
+                avg = round((cur.cost_usd + pos.cost_usd) / cents_to_usd(1) / total)
+                working.positions[tk] = Position(tk, total, max(1, min(99, avg)))
         for m in self.scanner.scan(self.data_source):
             # Don't stack a second order on a market whose entry is still resting.
             if self.executor.has_inflight_entry(m.ticker):
@@ -320,8 +337,12 @@ def run(settings, *, max_cycles: int = 0, poll_interval: Optional[float] = None)
             app.run_cycle()
         except Exception as exc:  # noqa: BLE001 -- the loop must survive anything
             log.exception("cycle %d failed", cycle)
+            was_broken = app.risk.circuit_broken()
             tripped = app.risk.record_error()
-            app.notifier.error(f"cycle {cycle} failed: {exc}")
+            # Alert each failure until the breaker trips; then a single HALT; then
+            # stay quiet until a healthy cycle clears it (no alert storm).
+            if not was_broken and not tripped:
+                app.notifier.error(f"cycle {cycle} failed: {exc}")
             if tripped:
                 app.notifier.halt(app.risk.halt_reason() or "error circuit breaker")
             app._persist()

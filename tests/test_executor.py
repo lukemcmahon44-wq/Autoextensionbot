@@ -121,11 +121,18 @@ def test_executor_reconcile_settles_then_reads():
 
 def test_executor_place_entry_sets_client_order_id():
     b = PaperBroker(100.0)
-    ex = Executor(b, SettleDS(), STRAT, day_fn=lambda: "20260101")
+    ex = Executor(b, SettleDS(), STRAT, day_fn=lambda: "20260101", run_id="run01")
     plan = EntryPlan("M", 99, 10)
     ex.place_entry(plan, market(ask=98))
-    # one client_order_id recorded by the paper broker
-    assert any(cid.startswith("ks-20260101-buy-M") for cid in b._seen)
+    assert list(b._seen) == ["ks-20260101-run01-buy-M-1"]
+
+
+def test_client_order_id_run_nonce_avoids_cross_run_collision():
+    # Same seq in two different runs must NOT produce the same id (else a crash
+    # that loses _seq could re-use a prior run's id, which Kalshi would dedupe).
+    a = Executor(PaperBroker(), SettleDS(), STRAT, run_id="runA")
+    b = Executor(PaperBroker(), SettleDS(), STRAT, run_id="runB")
+    assert a._next_id("buy", "M") != b._next_id("buy", "M")
 
 
 def test_executor_flatten_all_sells_everything():

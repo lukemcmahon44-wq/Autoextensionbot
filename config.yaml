@@ -71,7 +71,9 @@ risk:
   max_consecutive_errors: 5
 
 kill_switch:
-  # Drop a file with this name in the repo root to halt within one poll cycle.
+  # Drop a file with this name in the repo root to FREEZE all automated activity
+  # within one poll cycle (no new entries AND no automated exits -- a human takes
+  # over). This differs from the daily-loss limit, which only halts new entries.
   file: "KILL"
   flatten_on_kill: true              # also flatten all positions when KILL appears
 

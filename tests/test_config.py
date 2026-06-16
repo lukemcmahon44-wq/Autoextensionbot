@@ -110,6 +110,26 @@ def test_daily_loss_limit_out_of_range_rejected(config, tmp_path):
         config_mod.load_settings(_dump(tmp_path, config))
 
 
+def test_live_unresolvable_timezone_refused(config, tmp_path, monkeypatch):
+    key = tmp_path / "k.pem"
+    write_key(key)
+    config["mode"]["paper_trading"] = False
+    config["strategy"]["settlement_timezone"] = "Not/AZone"
+    monkeypatch.delenv("FORCE_PAPER", raising=False)
+    monkeypatch.setenv("KALSHI_API_KEY_ID", "abc-123")
+    monkeypatch.setenv("KALSHI_PRIVATE_KEY_PATH", str(key))
+    with pytest.raises(config_mod.ConfigError):
+        config_mod.load_settings(_dump(tmp_path, config))
+
+
+def test_paper_unresolvable_timezone_allowed(config, tmp_path, monkeypatch):
+    # Paper is a dev/dry-run; a bad tz degrades to local time rather than refusing.
+    config["mode"]["paper_trading"] = True
+    config["strategy"]["settlement_timezone"] = "Not/AZone"
+    monkeypatch.delenv("KALSHI_API_KEY_ID", raising=False)
+    assert config_mod.load_settings(_dump(tmp_path, config)).paper is True
+
+
 def test_valid_take_profit_accepted(config, tmp_path):
     config["mode"]["paper_trading"] = True
     config["strategy"]["take_profit_cents"] = 99

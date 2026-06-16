@@ -15,6 +15,7 @@ paper broker dedupes on it locally. A retry therefore can never double-fill.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Dict, Mapping, Optional
 
 from .models import (
@@ -31,14 +32,22 @@ from .strategy import ExitDecision
 log = logging.getLogger("kalshi.executor")
 
 
-def make_client_order_id(action: str, ticker: str, seq: int, day: str = "") -> str:
-    """Deterministic, unique-per-intent idempotency key.
+def make_client_order_id(action: str, ticker: str, seq: int, day: str = "", nonce: str = "") -> str:
+    """Unique-per-intent idempotency key.
 
-    Same (action, ticker, seq, day) -> same id, so a retry of the *same* intent
-    reuses it; a different intent (next seq) gets a different id.
+    Same (action, ticker, seq, day, nonce) -> same id, so a network retry of the
+    *same* intent reuses it. The per-run ``nonce`` ensures that if the process
+    crashes after sending an order but before persisting ``_seq``, the next run's
+    re-used seq can't alias the previous run's id (which Kalshi would dedupe,
+    silently dropping the new order).
     """
-    base = f"ks-{day}-{action}-{ticker}-{seq}" if day else f"ks-{action}-{ticker}-{seq}"
-    return base.replace("/", "_")
+    parts = ["ks"]
+    if day:
+        parts.append(day)
+    if nonce:
+        parts.append(nonce)
+    parts += [action, ticker, str(seq)]
+    return "-".join(parts).replace("/", "_")
 
 
 # --------------------------------------------------------------------------
@@ -55,8 +64,15 @@ class LiveBroker:
                 # YES-only bot; ignore flat/NO exposure but it remains visible on
                 # the exchange (and in logs) -- we just don't manage it here.
                 continue
+            # NOTE: assumes Kalshi's `market_exposure` is cost-basis in cents.
+            # Confirm against the API; an out-of-range average means that
+            # assumption is wrong, so surface it rather than silently clamping.
             exposure_cents = abs(int(mp.get("market_exposure", 0)))
             avg = int(round(exposure_cents / count)) if count else 0
+            if not 1 <= avg <= 99:
+                log.warning("position %s: derived avg %dc out of 1..99 "
+                            "(market_exposure=%s, count=%s) -- check field semantics",
+                            mp["ticker"], avg, exposure_cents, count)
             positions[mp["ticker"]] = Position(mp["ticker"], count, max(1, min(99, avg)))
         return AccountState(balance_usd=balance, positions=positions)
 
@@ -202,12 +218,15 @@ class PaperBroker:
 class Executor:
     """Wraps a broker with id generation, exits, flatten, and reconciliation."""
 
-    def __init__(self, broker, data_source, strategy_cfg: Mapping, *, day_fn=lambda: ""):
+    def __init__(self, broker, data_source, strategy_cfg: Mapping, *, day_fn=lambda: "", run_id=None):
         self.broker = broker
         self.data_source = data_source
         self.cfg = strategy_cfg
         self._seq = 0
         self._day_fn = day_fn
+        # A nonce unique to this process run, mixed into every client_order_id so a
+        # stale (un-persisted) _seq after a crash can't collide with a prior run.
+        self._run_id = run_id or uuid.uuid4().hex[:8]
         # In-flight (placed but not yet confirmed filled) resting orders. These let
         # us avoid stacking duplicate entries / exits across cycles, which would
         # otherwise breach the per-position and total-exposure caps once they fill.
@@ -216,7 +235,7 @@ class Executor:
 
     def _next_id(self, action: str, ticker: str) -> str:
         self._seq += 1
-        return make_client_order_id(action, ticker, self._seq, self._day_fn())
+        return make_client_order_id(action, ticker, self._seq, self._day_fn(), self._run_id)
 
     def has_inflight_entry(self, ticker: str) -> bool:
         """True if we have an unfilled entry resting for this ticker (don't stack)."""
