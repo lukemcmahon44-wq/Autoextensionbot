@@ -1,14 +1,21 @@
 # systemd unit for always-on hosting.
 #
 # Install:
+#   sudo useradd --system --create-home --home-dir /opt/kalshi-scalper scalper
+#   sudo cp -r src config.yaml requirements.txt /opt/kalshi-scalper/
+#   # create an isolated virtualenv with the pinned deps:
+#   sudo -u scalper python3 -m venv /opt/kalshi-scalper/.venv
+#   sudo -u scalper /opt/kalshi-scalper/.venv/bin/pip install -r /opt/kalshi-scalper/requirements.txt
+#   # put your secrets in /opt/kalshi-scalper/.env, then lock it down:
+#   #   KALSHI_API_KEY_ID=...   KALSHI_PRIVATE_KEY_PATH=/opt/kalshi-scalper/key.pem
+#   #   ALERT_WEBHOOK_URL=...    (FORCE_PAPER=true for a dry run)
+#   sudo chown scalper:scalper /opt/kalshi-scalper/.env && sudo chmod 600 /opt/kalshi-scalper/.env
 #   sudo cp deploy/kalshi-scalper.service /etc/systemd/system/
-#   sudo mkdir -p /opt/kalshi-scalper && sudo cp -r src config.yaml /opt/kalshi-scalper/
-#   # put your secrets in /opt/kalshi-scalper/.env and your key alongside it
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now kalshi-scalper
 #
 # Watch it:   journalctl -u kalshi-scalper -f
-# Stop fast:  touch /opt/kalshi-scalper/KILL   (flattens, then halts)
+# Stop fast:  touch /opt/kalshi-scalper/KILL     (freezes + flattens, then halts)
 #             sudo systemctl stop kalshi-scalper
 [Unit]
 Description=kalshi-scalper autonomous trading bot
@@ -21,13 +28,15 @@ User=scalper
 WorkingDirectory=/opt/kalshi-scalper
 # Secrets live here (chmod 600). For a paper dry-run add FORCE_PAPER=true.
 EnvironmentFile=/opt/kalshi-scalper/.env
-ExecStart=/usr/bin/python3 -m src.main
+# Use the venv interpreter so the pinned dependencies are on the path.
+ExecStart=/opt/kalshi-scalper/.venv/bin/python -m src.main
 # Crash-resistant: the loop self-heals, but restart the process if it ever exits.
 Restart=always
 RestartSec=10
-# Don't fight a fail-closed refusal (exit 2) in a tight loop.
+# Don't hot-loop on a fail-closed refusal (exit 2 = bad/missing config).
 RestartPreventExitStatus=2
-# Light hardening.
+# Light hardening. ProtectSystem=full keeps /usr,/boot,/etc read-only but leaves
+# WorkingDirectory (/opt/kalshi-scalper) writable for state.json.
 NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
