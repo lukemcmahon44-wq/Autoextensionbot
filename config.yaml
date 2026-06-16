@@ -1,0 +1,79 @@
+# kalshi-scalper configuration.
+#
+# Values here are READ AT RUNTIME -- nothing in src/ should hardcode a strategy
+# number. Tune the bot by editing this file, not the code.
+#
+# !!! THIS SHIPS CONFIGURED FOR LIVE, REAL-MONEY TRADING !!!
+#   mode.paper_trading: false  => the owner has chosen live trading.
+# While developing/testing, ALWAYS export FORCE_PAPER=true so your runs are
+# simulated. The bot also refuses to start live without valid API credentials
+# (fail-closed).
+
+mode:
+  # false = LIVE real-money trading (shipped default, owner's choice).
+  # true  = paper trading (simulated fills, no real-money endpoint hit).
+  # The FORCE_PAPER=true env var overrides this to paper no matter what.
+  paper_trading: false
+
+  # Base URLs are CONFIG-DRIVEN on purpose: Kalshi has changed API hosts more
+  # than once. Verify against https://docs.kalshi.com before going live and
+  # update these if they have moved. Do not hardcode hosts in the code.
+  api_base_live: "https://api.elections.kalshi.com/trade-api/v2"
+  api_base_demo: "https://demo-api.kalshi.co/trade-api/v2"
+
+  # Where paper mode gets its market data:
+  #   auto = use the demo API if credentials are present and it is reachable,
+  #          otherwise fall back to a fully-offline local market simulator.
+  #   live = require the demo API (fail if unreachable).
+  #   sim  = always use the offline simulator (no network needed).
+  paper_data_source: "auto"
+
+strategy:
+  # Universe: open markets settling between now and this many hours out.
+  # Keep <= today's remaining hours for same-day settlement only.
+  max_hours_to_close: 8
+
+  # Entry band (YES ask, in cents). Default: buy near-certain YES at 96-99.
+  entry_min_cents: 96
+  entry_max_cents: 99
+
+  # Liquidity / quality filters.
+  max_entry_spread_cents: 2          # (ask - bid) must be <= this
+  min_orderbook_depth_contracts: 50  # best-ask depth must be >= this
+
+  # Pricing.
+  max_entry_slippage_cents: 1        # buy limit = min(ask + this, entry_max_cents)
+  max_exit_slippage_cents: 3         # sell-to-close limit may sit this far under bid
+
+  # Exits (YES bid, in cents).
+  stop_loss_cents: 93                # bid <= this => sell to close immediately
+  take_profit_cents: null            # bid >= this => take profit; null => hold to settlement
+
+risk:
+  # Hard caps. Do NOT raise these to "trade more" -- they are the safety budget.
+  max_position_usd: 50               # max cost basis per single position
+  max_total_exposure_usd: 250        # max cost basis summed across all positions
+  max_concurrent_positions: 3
+
+  # Daily circuit breaker. Loss measured against start-of-day equity.
+  daily_loss_limit_pct: 5.0
+  flatten_on_daily_limit: true       # also flatten everything when the daily limit trips
+
+  # No new entries in the final minutes before a market closes (gap risk is worst here).
+  no_new_entries_before_close_min: 10
+
+  # Consecutive transient errors before halting + alerting.
+  max_consecutive_errors: 5
+
+kill_switch:
+  # Drop a file with this name in the repo root to halt within one poll cycle.
+  file: "KILL"
+  flatten_on_kill: true              # also flatten all positions when KILL appears
+
+loop:
+  poll_interval_sec: 30
+  reconcile_every_cycles: 10         # re-sync positions/balance from the exchange this often
+  state_file: "state.json"
+
+logging:
+  level: "INFO"
