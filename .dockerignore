@@ -1,0 +1,20 @@
+# Keep the build context (and image) small and free of secrets/dev cruft.
+.git
+.github
+tests
+deploy
+*.md
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.venv
+venv
+# Secrets / runtime artifacts -- must never enter an image.
+.env
+*.pem
+*.key
+KILL
+state.json
+*.log

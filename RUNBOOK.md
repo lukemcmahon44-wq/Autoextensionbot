@@ -114,7 +114,11 @@ error counter, and (in paper) the simulated book cleanly.
 
 If `ALERT_WEBHOOK_URL` is set, the bot posts to it (Slack/Discord/generic) on:
 
-- **TRADE** — every entry and exit: `TRADE BUY/SELL <ticker> x<count> @ <price>c`.
+- **STARTED** — once at boot, with the active limits (band, stop, caps).
+- **ORDER** — a limit order was submitted and is *working* (not yet filled):
+  `ORDER BUY/SELL <ticker> x<count> @ <price>c (working)`. Common in live, where
+  fills are asynchronous.
+- **TRADE** — a *confirmed fill*: `TRADE BUY/SELL <ticker> x<count> @ <price>c`.
 - **HALT / KILL** — kill switch, daily-loss limit, or error breaker tripping;
   notes if it flattened.
 - **ERROR** — a cycle threw; the loop keeps running and counts it toward the
